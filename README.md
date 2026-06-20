@@ -10,8 +10,6 @@ Nexus is a state-of-the-art, real-time video conferencing and collaboration plat
 - **Database:** MongoDB (via Atlas) & Neon PostgreSQL
 - **AI/ML:** Google Gemini API (for intelligent meeting summaries), MediaPipe (for facial tracking)
 - **Infrastructure:** Redis (Pub/Sub & Caching)
-- **Agent Architecture:** Built and optimized by Antigravity
-
 ## 📋 Prerequisites
 
 Before you can run Nexus locally, you must have the following installed on your machine:
@@ -105,13 +103,13 @@ nexus/
 └── analysis-api/         # (Optional) Python FastAPI for advanced ML workloads
 ```
 
-## ☁️ Deployment to Antigravity
+## ☁️ Deployment
 
-Nexus is designed to be fully compatible with Antigravity infrastructure. 
-1. Connect your GitHub repository to Antigravity.
+Nexus is designed to be fully compatible with modern cloud infrastructure like Vercel, Render, or AWS. 
+1. Connect your GitHub repository to your hosting provider.
 2. In the deployment configuration, set the Frontend build command to `npm run build` within the `/frontend` directory and the output directory to `dist`.
 3. Set the Backend build command to `npm run build` and the start command to `npm start` within the `/signaling-server` directory.
-4. Ensure all environment variables from your `.env` file are copied into the Antigravity project dashboard.
+4. Ensure all environment variables from your `.env` file are copied into the deployment dashboard.
 
 ---
 *Developed with extreme precision. Built like an Ultra Promax Developer.*
