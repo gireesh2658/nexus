@@ -1,0 +1,81 @@
+import React from 'react';
+import { useTracks, useLocalParticipant, type TrackReferenceOrPlaceholder } from '@livekit/components-react';
+import { Track } from 'livekit-client';
+import VideoTile from './VideoTile';
+
+
+const LiveKitGrid: React.FC = () => {
+  // Get all camera tracks
+  const cameraTracks = useTracks(
+    [{ source: Track.Source.Camera, withPlaceholder: true }],
+    { onlySubscribed: false }
+  );
+
+  // Get screen share tracks
+  const screenTracks = useTracks(
+    [{ source: Track.Source.ScreenShare, withPlaceholder: false }],
+    { onlySubscribed: false }
+  );
+
+  const { localParticipant } = useLocalParticipant();
+
+  const hasScreenShare = screenTracks.length > 0;
+
+  // Render a single track
+  const renderTrack = (trackRef: TrackReferenceOrPlaceholder, isScreenShare: boolean = false) => {
+    const isLocal = trackRef.participant.identity === localParticipant.identity;
+    const name = trackRef.participant.name || trackRef.participant.identity;
+    
+    let stream: MediaStream | null = null;
+    if (trackRef.publication?.track?.mediaStreamTrack) {
+      stream = new MediaStream([trackRef.publication.track.mediaStreamTrack]);
+    }
+    
+    return (
+      <div key={`${trackRef.participant.identity}-${trackRef.source}`} className={`${isScreenShare ? 'w-full h-full' : ''}`}>
+        <VideoTile
+          stream={stream}
+          name={isScreenShare ? `${name}'s Screen` : name}
+          userId={trackRef.participant.identity}
+          isLocal={isLocal && !isScreenShare}
+          isMuted={trackRef.publication?.isMuted}
+          score={undefined} // handled by VideoTile internally for local
+        />
+      </div>
+    );
+  };
+
+  if (hasScreenShare) {
+    return (
+      <div className="w-full h-full flex flex-col p-4 gap-4">
+        {/* Pinned Screen Share */}
+        <div className="flex-1 w-full bg-black/80 rounded-2xl overflow-hidden border border-nexus-primary/30 shadow-glow-primary">
+          {renderTrack(screenTracks[0], true)}
+        </div>
+        
+        {/* Filmstrip for Cameras */}
+        <div className="h-48 w-full flex gap-4 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-white/10">
+          {cameraTracks.map(t => (
+            <div key={`${t.participant.identity}-${t.source}`} className="h-full w-auto aspect-video shrink-0">
+              {renderTrack(t)}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // Regular Grid without Screen Share
+  const totalTiles = cameraTracks.length;
+  let gridClass = 'grid-cols-1';
+  if (totalTiles >= 2) gridClass = 'grid-cols-1 sm:grid-cols-2';
+  if (totalTiles >= 5) gridClass = 'grid-cols-2 lg:grid-cols-3';
+
+  return (
+    <div className={`grid ${gridClass} gap-4 w-full h-full content-center p-4`}>
+      {cameraTracks.map(t => renderTrack(t))}
+    </div>
+  );
+};
+
+export default LiveKitGrid;

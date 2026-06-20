@@ -1,0 +1,79 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-nexus-bg text-nexus-text font-sans antialiased overflow-x-hidden;
+  }
+
+  /* Custom Scrollbar for ultra-premium feel */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-nexus-bg;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-white/10 rounded-full hover:bg-white/20 transition-colors;
+  }
+}
+
+@layer components {
+  .glass-panel {
+    @apply border border-nexus-border backdrop-blur-2xl shadow-glass transition-all duration-300;
+    background-image: linear-gradient(135deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.01) 100%);
+  }
+
+  .glass-panel:hover {
+    @apply border-nexus-borderHighlight shadow-glass-hover;
+  }
+
+  .text-gradient-primary {
+    @apply bg-nexus-primary bg-clip-text text-transparent;
+  }
+
+  .text-gradient-accent {
+    @apply bg-nexus-accent bg-clip-text text-transparent;
+  }
+}
+
+/* Background animated elements */
+.bg-blobs {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: -1;
+  overflow: hidden;
+  background-color: #05050A;
+}
+
+.bg-blobs::before,
+.bg-blobs::after {
+  content: '';
+  position: absolute;
+  width: 800px;
+  height: 800px;
+  border-radius: 50%;
+  filter: blur(120px);
+  opacity: 0.15;
+  animation: float 20s infinite ease-in-out alternate;
+}
+
+.bg-blobs::before {
+  background: #6C5CE7;
+  top: -20%;
+  left: -10%;
+}
+
+.bg-blobs::after {
+  background: #00D2FF;
+  bottom: -20%;
+  right: -10%;
+  animation-delay: -10s;
+}
