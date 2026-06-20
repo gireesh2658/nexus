@@ -103,13 +103,4 @@ nexus/
 └── analysis-api/         # (Optional) Python FastAPI for advanced ML workloads
 ```
 
-## ☁️ Deployment
 
-Nexus is designed to be fully compatible with modern cloud infrastructure like Vercel, Render, or AWS. 
-1. Connect your GitHub repository to your hosting provider.
-2. In the deployment configuration, set the Frontend build command to `npm run build` within the `/frontend` directory and the output directory to `dist`.
-3. Set the Backend build command to `npm run build` and the start command to `npm start` within the `/signaling-server` directory.
-4. Ensure all environment variables from your `.env` file are copied into the deployment dashboard.
-
----
-*Developed with extreme precision. Built like an Ultra Promax Developer.*
