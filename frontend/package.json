@@ -13,7 +13,8 @@
   "dependencies": {
     "@livekit/components-react": "^2.9.21",
     "@livekit/components-styles": "^1.2.0",
-    "@tensorflow/tfjs": "^4.22.0",
+    "@mediapipe/camera_utils": "^0.3.1675466862",
+    "@mediapipe/face_mesh": "^0.4.1633559619",
     "@vladmandic/face-api": "^1.7.15",
     "axios": "^1.17.0",
     "framer-motion": "^12.40.0",
@@ -23,7 +24,6 @@
     "react-dom": "^19.2.6",
     "react-hot-toast": "^2.6.0",
     "react-router-dom": "^7.17.0",
-    "socket.io-client": "^4.8.3",
     "vite-plugin-node-polyfills": "^0.28.0",
     "zustand": "^5.0.14"
   },

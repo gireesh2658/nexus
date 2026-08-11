@@ -1,13 +1,20 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Plus, Video, Calendar, Clock, Users } from 'lucide-react';
+import { Plus, Video, Calendar, Clock, Users, Keyboard } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 import { meetingService } from '../services/meetingService';
 import type { Meeting } from '../types';
 import toast from 'react-hot-toast';
 import { Button } from '../components/ui/Button';
 import { CreateMeetingModal } from '../components/meeting/CreateMeetingModal';
+
+const getGreeting = () => {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Good morning';
+  if (hour < 17) return 'Good afternoon';
+  return 'Good evening';
+};
 
 const Dashboard = () => {
   const { user } = useAuthStore();
@@ -57,14 +64,16 @@ const Dashboard = () => {
     hidden: { opacity: 0 },
     show: {
       opacity: 1,
-      transition: { staggerChildren: 0.1 }
+      transition: { staggerChildren: 0.05 }
     }
   };
 
   const itemVariants = {
-    hidden: { opacity: 0, y: 20 },
-    show: { opacity: 1, y: 0, transition: { type: 'spring' as const, stiffness: 300, damping: 24 } }
+    hidden: { opacity: 0, y: 12 },
+    show: { opacity: 1, y: 0, transition: { type: 'spring' as const, stiffness: 400, damping: 30 } }
   };
+
+  const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
 
   return (
     <motion.div 
@@ -73,56 +82,64 @@ const Dashboard = () => {
       initial="hidden"
       animate="show"
     >
-      {/* Header */}
-      <motion.div variants={itemVariants} className="flex justify-between items-center mb-8">
-        <div>
-          <h1 className="text-4xl font-bold mb-2 tracking-tight">
-            Welcome back, <span className="text-gradient-primary">{user?.name}</span>
-          </h1>
-          <p className="text-nexus-muted text-lg">Here's what's happening in your workspace today.</p>
-        </div>
-        
+      {/* Header — Calm greeting */}
+      <motion.div variants={itemVariants} className="mb-10">
+        <h1 className="text-2xl font-semibold font-display tracking-tight mb-1">
+          {getGreeting()}, {user?.name}
+        </h1>
+        <p className="text-nexus-muted text-body">{today}</p>
+      </motion.div>
+
+      {/* Action Row */}
+      <motion.div variants={itemVariants} className="flex items-center gap-3 mb-10">
         <Button 
           onClick={() => setIsModalOpen(true)}
-          className="shadow-glow-primary hover:scale-105 transition-transform"
         >
-          <Plus className="w-5 h-5" />
-          Create Meeting
+          <Plus className="w-4 h-4" />
+          New meeting
+        </Button>
+        <Button 
+          variant="secondary"
+          onClick={() => {}}
+        >
+          <Keyboard className="w-4 h-4" />
+          Join with code
         </Button>
       </motion.div>
 
-      {/* Main Feed: Upcoming Meetings */}
+      {/* Schedule Section */}
       <motion.div variants={itemVariants}>
-        <div className="flex justify-between items-center mb-6">
-          <h2 className="text-2xl font-bold flex items-center gap-2">
-            <Calendar className="w-6 h-6 text-nexus-primary" /> Your Meetings
-          </h2>
-        </div>
+        <h2 className="text-label-sm text-nexus-muted uppercase tracking-wider mb-4 flex items-center gap-2">
+          <Calendar className="w-4 h-4" /> Today's schedule
+        </h2>
         
-        <div className="space-y-4">
-          {isLoading ? (
-            <div className="animate-pulse space-y-4">
-              {[1, 2, 3].map(i => <div key={i} className="h-32 bg-white/5 rounded-2xl" />)}
-            </div>
-          ) : allMeetings.length > 0 ? (
-            allMeetings.map((meeting, idx) => (
+        {isLoading ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            {[1, 2, 3].map(i => <div key={i} className="h-36 bg-nexus-surface rounded-card animate-pulse" />)}
+          </div>
+        ) : allMeetings.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            {allMeetings.map((meeting, idx) => (
               <MeetingCard 
                 key={meeting._id} 
                 meeting={meeting} 
                 onJoin={() => handleJoin(meeting.roomCode)} 
                 isHost={(meeting.hostId as unknown as { _id: string })?._id === user?._id || (meeting.hostId as unknown as string) === user?._id}
-                delay={idx * 0.1}
+                delay={idx * 0.05}
               />
-            ))
-          ) : (
-            <div className="glass-panel p-10 rounded-2xl flex flex-col items-center justify-center text-center border-dashed border-2 border-nexus-border">
-              <Video className="w-12 h-12 text-nexus-muted mb-4 opacity-50" />
-              <h3 className="text-xl font-bold mb-2">No Scheduled Meetings</h3>
-              <p className="text-nexus-muted mb-6">You have a clear schedule. Take a break or schedule a new meeting.</p>
-              <Button variant="secondary" onClick={() => setIsModalOpen(true)}>Create Meeting</Button>
-            </div>
-          )}
-        </div>
+            ))}
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <Video className="w-10 h-10 text-nexus-muted mb-4 opacity-30" />
+            <p className="text-nexus-muted text-body mb-1">Nothing on the calendar yet.</p>
+            <p className="text-nexus-muted/60 text-sm mb-6">Schedule a meeting to get your team together.</p>
+            <Button variant="secondary" onClick={() => setIsModalOpen(true)}>
+              <Plus className="w-4 h-4" />
+              Create Meeting
+            </Button>
+          </div>
+        )}
       </motion.div>
 
       <CreateMeetingModal 
@@ -148,41 +165,46 @@ const MeetingCard = ({ meeting, onJoin, isHost, delay }: { meeting: Meeting, onJ
 
   return (
     <motion.div 
-      initial={{ opacity: 0, x: -20 }}
-      animate={{ opacity: 1, x: 0 }}
-      transition={{ delay, type: 'spring', stiffness: 300, damping: 24 }}
-      className={`glass-panel p-6 rounded-2xl transition-all border ${isNow ? 'border-nexus-primary/50 shadow-glow-primary' : ''}`}
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay, type: 'spring', stiffness: 400, damping: 30 }}
+      className={`bg-nexus-surface rounded-card p-5 border border-transparent hover:border-nexus-borderHover transition-all duration-200 cursor-pointer group ${isNow ? 'border-nexus-primary/30' : ''}`}
+      onClick={onJoin}
     >
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        
-        <div className="flex items-start gap-4">
-          <div className={`w-14 h-14 rounded-xl flex flex-col items-center justify-center border ${isNow ? 'bg-nexus-primary/20 border-nexus-primary/50 text-nexus-purple' : 'bg-white/5 border-white/10 text-nexus-muted'}`}>
-            <span className="text-sm font-bold">{date.toLocaleDateString('en-US', { month: 'short' })}</span>
-            <span className="text-lg font-bold leading-none">{date.getDate()}</span>
-          </div>
-          
-          <div>
-            <div className="flex items-center gap-3 mb-1">
-              <h3 className="text-xl font-bold">{meeting.title}</h3>
-              {isNow && <span className="px-2 py-0.5 rounded text-xs font-bold bg-nexus-danger/20 text-nexus-danger border border-nexus-danger/30 animate-pulse-glow">LIVE NOW</span>}
-            </div>
-            <p className="text-sm text-nexus-muted flex items-center gap-4">
-              <span className="flex items-center gap-1"><Clock className="w-4 h-4" /> {date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} ({meeting.scheduledDurationMins}m)</span>
-              <span className="flex items-center gap-1"><Users className="w-4 h-4" /> {isHost ? `${meeting.participantUsernames.length} invited` : `Host: ${meeting.hostId?.name || 'Unknown'}`}</span>
-            </p>
-          </div>
-        </div>
+      {/* Time */}
+      <p className="text-label text-nexus-text font-display mb-1">
+        {date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+      </p>
+      
+      {/* Title */}
+      <h3 className="text-body font-medium text-nexus-text mb-3">
+        {meeting.title}
+        {isNow && (
+          <span className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-nexus-danger/15 text-nexus-danger border border-nexus-danger/20">
+            <span className="w-1.5 h-1.5 rounded-full bg-nexus-danger animate-pulse-soft" />
+            LIVE
+          </span>
+        )}
+      </h3>
 
-        <div className="w-full sm:w-auto">
-          <Button 
-            onClick={onJoin}
-            variant={isNow ? 'primary' : 'secondary'}
-            className={`w-full sm:w-auto ${isNow ? 'bg-nexus-success text-black hover:bg-green-500 shadow-[0_0_15px_rgba(0,230,118,0.4)] focus:ring-nexus-success' : ''}`}
-          >
-            {isNow ? 'Join Now' : 'Enter Lobby'}
-          </Button>
-        </div>
-        
+      {/* Meta */}
+      <div className="flex items-center gap-3 text-xs text-nexus-muted">
+        <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {meeting.scheduledDurationMins}m</span>
+        <span className="flex items-center gap-1"><Users className="w-3 h-3" /> {isHost ? meeting.participantUsernames.length : 'Invited'}</span>
+      </div>
+
+      {/* Stacked Avatars placeholder */}
+      <div className="flex -space-x-2 mt-3">
+        {(meeting.participantUsernames || []).slice(0, 3).map((_, i) => (
+          <div key={i} className="w-7 h-7 rounded-full bg-nexus-bg border-2 border-nexus-surface flex items-center justify-center text-[10px] font-medium text-nexus-muted">
+            {String.fromCharCode(65 + i)}
+          </div>
+        ))}
+        {(meeting.participantUsernames?.length || 0) > 3 && (
+          <div className="w-7 h-7 rounded-full bg-nexus-bg border-2 border-nexus-surface flex items-center justify-center text-[10px] font-medium text-nexus-muted">
+            +{meeting.participantUsernames.length - 3}
+          </div>
+        )}
       </div>
     </motion.div>
   );

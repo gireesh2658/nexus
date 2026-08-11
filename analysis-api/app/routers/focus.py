@@ -1,4 +1,5 @@
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
+from app.utils.auth import verify_token as auth_token
 from app.models.schemas import BehavioralSignal
 from app.ml.score_fuser import fuse_scores
 from datetime import datetime
@@ -6,7 +7,9 @@ import json
 import jwt
 import os
 
-JWT_SECRET = os.getenv("JWT_SECRET", "nexus_dev_secret_key_64_chars_minimum_for_jwt_signing_replace_in_production_asap_ok")
+JWT_SECRET = os.getenv("JWT_SECRET")
+if not JWT_SECRET:
+    raise ValueError("FATAL: JWT_SECRET is not set.")
 JWT_PUBLIC_KEY = os.getenv("JWT_PUBLIC_KEY")
 
 def verify_token(token: str) -> bool:
@@ -78,9 +81,8 @@ async def behavioral_ws(websocket: WebSocket):
 
 @router.websocket("/ws/frame")
 async def frame_ws(websocket: WebSocket):
-    """WebSocket endpoint for receiving analysis video frames at 1 fps."""
+    """WebSocket endpoint for receiving analysis landmarks at 10 fps."""
     await websocket.accept()
-    from app.workers.focus_worker import process_frame_task
     try:
         handshake = await websocket.receive_text()
         handshake_data = json.loads(handshake)
@@ -92,22 +94,66 @@ async def frame_ws(websocket: WebSocket):
         while True:
             data = await websocket.receive_text()
             frame_data = json.loads(data)
-
-            process_frame_task.delay(
-                participant_id=frame_data.get("participant_id"),
-                meeting_id=frame_data.get("meeting_id"),
-                frame_data=frame_data.get("frame"),
-            )
+            
+            landmarks = frame_data.get("landmarks")
+            participant_id = frame_data.get("participant_id")
+            meeting_id = frame_data.get("meeting_id")
+            
+            if landmarks and len(landmarks) > 263 and participant_id and meeting_id:
+                import math
+                nose = landmarks[1]
+                left_eye = landmarks[33]
+                right_eye = landmarks[263]
+                chin = landmarks[152]
+                
+                # yaw
+                dx = right_eye['x'] - left_eye['x']
+                nx = nose['x'] - left_eye['x']
+                yaw_deg = ((nx / dx) - 0.5) * 100 if dx else 0
+                
+                # pitch
+                eyey = (left_eye['y'] + right_eye['y']) / 2
+                dy = chin['y'] - eyey
+                ny = nose['y'] - eyey
+                pitch_deg = ((ny / dy) - 0.5) * 100 if dy else 0
+                
+                # roll
+                dxd = right_eye['x'] - left_eye['x']
+                dyd = right_eye['y'] - left_eye['y']
+                roll_deg = math.atan2(dyd, dxd) * (180 / math.pi) if dxd else 0
+                
+                pose_score = 100
+                if abs(yaw_deg) > 15: pose_score -= abs(yaw_deg) * 2
+                if abs(pitch_deg) > 10: pose_score -= abs(pitch_deg) * 3
+                if abs(roll_deg) > 8: pose_score -= abs(roll_deg) * 4
+                pose_score = max(0, min(100, pose_score))
+                
+                # EAR
+                L_v1, L_v2 = landmarks[159], landmarks[145]
+                L_h1, L_h2 = landmarks[33], landmarks[133]
+                ear_dx = L_h1['x'] - L_h2['x']
+                ear = abs(L_v1['y'] - L_v2['y']) / abs(ear_dx) if ear_dx else 0
+                
+                blink_score = 50 if ear < 0.15 else 100
+                visual_score = (pose_score * 0.6) + (blink_score * 0.4)
+                
+                from app.ml.score_fuser import redis_cache
+                if redis_cache:
+                    redis_cache.setex(
+                        f"visual_score:{meeting_id}:{participant_id}",
+                        10,
+                        json.dumps({"score": visual_score / 100.0})
+                    )
 
             await websocket.send_text(json.dumps({
-                "status": "queued",
-                "participant_id": frame_data.get("participant_id"),
+                "status": "processed",
+                "participant_id": participant_id,
             }))
     except WebSocketDisconnect:
         pass
 
 
-@router.get("/scores/{meeting_id}")
+@router.get("/scores/{meeting_id}", dependencies=[Depends(auth_token)])
 async def get_meeting_scores(meeting_id: str):
     """Get latest focus scores for all participants in a meeting."""
     signals = behavioral_cache.get(meeting_id, {})
@@ -133,7 +179,7 @@ def compute_behavioral_score(signal: BehavioralSignal) -> float:
 
     return (tab_score * 0.50) + (idle_inverse * 0.30) + (interaction_ratio * 0.20)
 
-@router.delete("/cleanup/{meeting_id}")
+@router.delete("/cleanup/{meeting_id}", dependencies=[Depends(auth_token)])
 async def cleanup_meeting(meeting_id: str):
     """Clean up memory when a meeting ends."""
     if meeting_id in behavioral_cache:

@@ -1,11 +1,11 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { jwtConfig } from '../config/jwtConfig';
-import User, { IUser } from '../models/User';
+import { prisma } from '../config/db';
 import { redis1 } from '../config/redis';
 
 export interface AuthRequest extends Request {
-  user?: IUser;
+  user?: any;
 }
 
 export const authMiddleware = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
@@ -25,7 +25,6 @@ export const authMiddleware = async (req: AuthRequest, res: Response, next: Next
       algorithms: [jwtConfig.algorithm],
     }) as { userId: string; jti?: string };
 
-    // Check blacklist in Redis DB 1
     if (decoded.jti) {
       const blacklisted = await redis1.get(`bl_${decoded.jti}`);
       if (blacklisted) {
@@ -34,7 +33,7 @@ export const authMiddleware = async (req: AuthRequest, res: Response, next: Next
       }
     }
 
-    const user = await User.findById(decoded.userId).select('-password');
+    const user = await prisma.user.findUnique({ where: { id: decoded.userId } });
     if (!user) {
       res.status(401).json({ error: 'Invalid token. User not found.' });
       return;
@@ -45,7 +44,8 @@ export const authMiddleware = async (req: AuthRequest, res: Response, next: Next
       return;
     }
 
-    req.user = user;
+    const { password, ...userWithoutPassword } = user;
+    req.user = userWithoutPassword;
     next();
   } catch (error) {
     if (error instanceof jwt.TokenExpiredError) {

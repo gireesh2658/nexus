@@ -7,15 +7,14 @@ interface AppLayoutProps {
 
 export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
   return (
-    <div className="relative min-h-screen text-nexus-text overflow-hidden bg-nexus-bg">
+    <div className="relative min-h-screen text-nexus-text bg-nexus-bg">
       {/* Layout Wrapper */}
       <div className="flex h-screen overflow-hidden">
         <Sidebar />
         
         {/* Main Content Area */}
-        <main className="flex-1 md:ml-64 h-full overflow-y-auto overflow-x-hidden relative z-10 scroll-smooth">
-          <div className="absolute inset-0 bg-gradient-to-b from-nexus-bg/0 via-nexus-bg/50 to-nexus-bg pointer-events-none -z-10" />
-          <div className="p-6 lg:p-10 max-w-7xl mx-auto w-full">
+        <main className="flex-1 md:ml-16 h-full overflow-y-auto overflow-x-hidden relative z-10 scroll-smooth">
+          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 w-full py-6 lg:py-10">
             {children}
           </div>
         </main>

@@ -8,6 +8,7 @@ interface PeerParticipant {
   avatarColor: string;
   stream?: MediaStream;
   focusScore?: number;
+  joinedAt?: Date;
 }
 
 interface MeetingState {
@@ -18,6 +19,7 @@ interface MeetingState {
   isCameraOff: boolean;
   liveSubtitles: Record<string, string>;
   activePanel: 'chat' | 'whiteboard' | 'participants' | 'transcript' | 'intelligence' | 'none';
+  consentGiven: boolean;
   
   setCurrentMeeting: (meeting: Meeting | null) => void;
   addParticipant: (p: PeerParticipant) => void;
@@ -29,6 +31,7 @@ interface MeetingState {
   setLiveSubtitle: (userId: string, text: string) => void;
   clearLiveSubtitle: (userId: string) => void;
   setActivePanel: (panel: 'chat' | 'whiteboard' | 'participants' | 'transcript' | 'intelligence' | 'none') => void;
+  setConsentGiven: (c: boolean) => void;
   clearMeeting: () => void;
 }
 
@@ -40,8 +43,10 @@ export const useMeetingStore = create<MeetingState>((set) => ({
   isCameraOff: false,
   liveSubtitles: {},
   activePanel: 'none',
+  consentGiven: false,
 
   setActivePanel: (panel) => set((state) => ({ activePanel: state.activePanel === panel ? 'none' : panel })),
+  setConsentGiven: (c) => set({ consentGiven: c }),
   setCurrentMeeting: (meeting) => set({ currentMeeting: meeting }),
   
   addParticipant: (p) => set((state) => ({
@@ -50,7 +55,10 @@ export const useMeetingStore = create<MeetingState>((set) => ({
   
   removeParticipant: (userId) => set((state) => {
     const updated = { ...state.activeParticipants };
-    delete updated[userId];
+    if (updated[userId]) {
+      updated[userId] = { ...updated[userId], leaving: true } as unknown as PeerParticipant;
+    }
+    // Note: The actual deletion from the store will be handled by the component after the fade-out animation
     return { activeParticipants: updated };
   }),
 

@@ -1,4 +1,5 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -9,71 +10,118 @@
     @apply bg-nexus-bg text-nexus-text font-sans antialiased overflow-x-hidden;
   }
 
-  /* Custom Scrollbar for ultra-premium feel */
+  /* Custom Scrollbar — thin, minimal */
   ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: 5px;
+    height: 5px;
   }
   ::-webkit-scrollbar-track {
-    @apply bg-nexus-bg;
+    @apply bg-transparent;
   }
   ::-webkit-scrollbar-thumb {
-    @apply bg-white/10 rounded-full hover:bg-white/20 transition-colors;
+    @apply bg-white/10 rounded-full hover:bg-white/15 transition-colors;
   }
 }
 
 @layer components {
+  /* ═══ Surface Panel (replaces glass-panel) ═══ */
+  .surface-panel {
+    background-color: #16181D;
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    transition: border-color 200ms ease;
+  }
+
+  .surface-panel:hover {
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+
+  /* ═══ Glass Panel (legacy compat — now solid) ═══ */
   .glass-panel {
-    @apply border border-nexus-border backdrop-blur-2xl shadow-glass transition-all duration-300;
-    background-image: linear-gradient(135deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.01) 100%);
+    background-color: #16181D;
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    transition: border-color 200ms ease;
   }
 
   .glass-panel:hover {
-    @apply border-nexus-borderHighlight shadow-glass-hover;
+    border-color: rgba(255, 255, 255, 0.08);
   }
 
+  /* ═══ Matte Overlay (in-call floating elements — NO blur) ═══ */
+  .matte-overlay {
+    background-color: rgba(22, 24, 29, 0.85);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    /* NO backdrop-filter — WebRTC safe */
+  }
+
+  /* ═══ Signal Gradient Text ═══ */
   .text-gradient-primary {
-    @apply bg-nexus-primary bg-clip-text text-transparent;
+    background: linear-gradient(135deg, #5B57FF 0%, #00D4FF 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
   }
 
   .text-gradient-accent {
-    @apply bg-nexus-accent bg-clip-text text-transparent;
+    background: linear-gradient(135deg, #5B57FF 0%, #00D4FF 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* ═══ Signal Gradient Button ═══ */
+  .btn-signal {
+    background: linear-gradient(135deg, #5B57FF 0%, #00D4FF 100%);
+    color: white;
+    border: none;
+    transition: opacity 200ms ease, transform 100ms ease;
+  }
+
+  .btn-signal:hover {
+    opacity: 0.9;
+  }
+
+  .btn-signal:active {
+    transform: scale(0.98);
+  }
+
+  /* ═══ Presence Ring — Active Speaker ═══ */
+  .presence-ring {
+    position: relative;
+    border: 2px solid transparent;
+    background-origin: border-box;
+    background-clip: padding-box, border-box;
+    background-image:
+      linear-gradient(#0A0B0E, #0A0B0E),
+      linear-gradient(135deg, #5B57FF, #00D4FF);
+    animation: ringBreathe 3s ease-in-out infinite;
+  }
+
+  /* ═══ Video Label (solid overlay, no blur) ═══ */
+  .video-label {
+    background-color: rgba(10, 11, 14, 0.7);
+    padding: 4px 8px;
+    border-radius: 6px;
+    /* NO backdrop-filter */
   }
 }
 
-/* Background animated elements */
-.bg-blobs {
+/* ═══ Background Vignette (static, no animation) ═══ */
+.bg-vignette {
   position: fixed;
   top: 0;
   left: 0;
   width: 100vw;
   height: 100vh;
   z-index: -1;
-  overflow: hidden;
-  background-color: #05050A;
+  background:
+    radial-gradient(ellipse at 20% 20%, rgba(91, 87, 255, 0.04) 0%, transparent 60%),
+    radial-gradient(ellipse at 80% 80%, rgba(0, 212, 255, 0.03) 0%, transparent 60%),
+    #0A0B0E;
+  pointer-events: none;
 }
 
-.bg-blobs::before,
-.bg-blobs::after {
-  content: '';
-  position: absolute;
-  width: 800px;
-  height: 800px;
-  border-radius: 50%;
-  filter: blur(120px);
-  opacity: 0.15;
-  animation: float 20s infinite ease-in-out alternate;
-}
-
-.bg-blobs::before {
-  background: #6C5CE7;
-  top: -20%;
-  left: -10%;
-}
-
-.bg-blobs::after {
-  background: #00D2FF;
-  bottom: -20%;
-  right: -10%;
-  animation-delay: -10s;
+/* ═══ Presence Ring Keyframes ═══ */
+@keyframes ringBreathe {
+  0%, 100% { opacity: 1; filter: brightness(1); }
+  50% { opacity: 0.75; filter: brightness(1.2); }
 }

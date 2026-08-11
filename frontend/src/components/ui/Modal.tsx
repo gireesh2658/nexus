@@ -41,20 +41,20 @@ export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }
         <div 
           ref={overlayRef}
           onClick={handleOverlayClick}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70"
         >
           <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+            initial={{ opacity: 0, scale: 0.96, y: 10 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 20 }}
-            transition={{ duration: 0.2 }}
-            className="w-full max-w-md bg-nexus-bg border border-nexus-border shadow-2xl rounded-2xl overflow-hidden"
+            exit={{ opacity: 0, scale: 0.96, y: 10 }}
+            transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+            className="w-full max-w-md bg-nexus-surface border border-nexus-border shadow-matte-lg rounded-panel overflow-hidden"
           >
-            <div className="flex items-center justify-between p-6 border-b border-white/5">
-              <h2 className="text-xl font-bold">{title}</h2>
+            <div className="flex items-center justify-between p-6 border-b border-nexus-border">
+              <h2 className="text-xl font-semibold font-display">{title}</h2>
               <button 
                 onClick={onClose}
-                className="p-2 rounded-lg hover:bg-white/10 transition-colors text-nexus-muted hover:text-white"
+                className="p-2 rounded-card hover:bg-white/5 transition-colors text-nexus-muted hover:text-white"
               >
                 <X className="w-5 h-5" />
               </button>

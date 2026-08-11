@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { randomBytes } from 'crypto';
 import { AuthRequest } from '../middleware/authMiddleware';
-import User from '../models/User';
+import { prisma } from '../config/db';
 import { jwtConfig } from '../config/jwtConfig';
 import { redis1 } from '../config/redis';
 
@@ -17,29 +17,19 @@ const generateRefreshTokenPayload = (userId: string, jti: string): string => {
 
 export const register = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { name, username, email, password, role } = req.body;
+    const { name, username, email, password } = req.body;
 
-    if (!name || typeof name !== 'string' || !username || typeof username !== 'string' || !email || typeof email !== 'string' || !password || typeof password !== 'string') {
+    if (!name || !username || !email || !password) {
       res.status(400).json({ error: 'All fields are required and must be valid strings' });
       return;
     }
 
-    if (password.length < 8) {
-      res.status(400).json({ error: 'Password must be at least 8 characters' });
-      return;
-    }
+    const existingUser = await prisma.user.findFirst({
+      where: {
+        OR: [{ email: email.toLowerCase() }, { username: username.toLowerCase() }]
+      }
+    });
 
-    if (!/^[a-z0-9_]{3,30}$/.test(username)) {
-      res.status(400).json({ error: 'Username must be 3-30 characters, lowercase letters, numbers, and underscores only' });
-      return;
-    }
-
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      res.status(400).json({ error: 'Invalid email format' });
-      return;
-    }
-
-    const existingUser = await User.findOne({ $or: [{ email: email.toLowerCase() }, { username: username.toLowerCase() }] });
     if (existingUser) {
       const field = existingUser.email === email.toLowerCase() ? 'email' : 'username';
       res.status(409).json({ error: `User with this ${field} already exists` });
@@ -50,34 +40,28 @@ export const register = async (req: AuthRequest, res: Response): Promise<void> =
     const avatarColors = ['#6C5CE7', '#A855F7', '#00D2FF', '#3A7BD5', '#00E676', '#FFD600', '#FF5252', '#1A56DB', '#8B5CF6', '#EC4899'];
     const avatarColor = avatarColors[Math.floor(Math.random() * avatarColors.length)];
 
-    const user = await User.create({
-      name,
-      username: username.toLowerCase(),
-      email: email.toLowerCase(),
-      password: hashedPassword,
-      role: role === 'host' ? 'host' : 'participant',
-      avatarColor,
+    const user = await prisma.user.create({
+      data: {
+        name,
+        username: username.toLowerCase(),
+        email: email.toLowerCase(),
+        password: hashedPassword,
+        avatarColor,
+      },
     });
 
     const jti = randomBytes(16).toString('hex');
     const refreshJti = randomBytes(16).toString('hex');
-    const token = generateAccessToken(user._id.toString(), jti);
-    const refreshToken = generateRefreshTokenPayload(user._id.toString(), refreshJti);
+    const token = generateAccessToken(user.id, jti);
+    const refreshToken = generateRefreshTokenPayload(user.id, refreshJti);
 
-    await redis1.set(`rt_family:${user._id}`, JSON.stringify({ current: refreshToken, used: [] }), 'EX', 7 * 24 * 60 * 60);
+    await redis1.set(`rt_family:${user.id}`, JSON.stringify({ current: refreshToken, used: [] }), 'EX', 7 * 24 * 60 * 60);
 
     res.cookie('refreshToken', refreshToken, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', maxAge: 7 * 24 * 60 * 60 * 1000 });
     res.cookie('jwt', token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', maxAge: 24 * 60 * 60 * 1000 });
 
     res.status(201).json({
-      user: {
-        _id: user._id,
-        name: user.name,
-        username: user.username,
-        email: user.email,
-        role: user.role,
-        avatarColor: user.avatarColor,
-      },
+      user: { id: user.id, name: user.name, username: user.username, email: user.email, role: user.role, avatarColor: user.avatarColor },
       token
     });
   } catch (error: any) {
@@ -89,12 +73,12 @@ export const login = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { email, password } = req.body;
 
-    if (!email || typeof email !== 'string' || !password || typeof password !== 'string') {
-      res.status(400).json({ error: 'Email and password are required and must be valid strings' });
+    if (!email || !password) {
+      res.status(400).json({ error: 'Email and password are required' });
       return;
     }
 
-    const user = await User.findOne({ email: email.toLowerCase() });
+    const user = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
     if (!user) {
       res.status(401).json({ error: 'Invalid email or password' });
       return;
@@ -111,28 +95,23 @@ export const login = async (req: AuthRequest, res: Response): Promise<void> => {
       return;
     }
 
-    user.lastSeen = new Date();
-    await user.save();
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { lastSeen: new Date() }
+    });
 
     const jti = randomBytes(16).toString('hex');
     const refreshJti = randomBytes(16).toString('hex');
-    const token = generateAccessToken(user._id.toString(), jti);
-    const refreshToken = generateRefreshTokenPayload(user._id.toString(), refreshJti);
+    const token = generateAccessToken(user.id, jti);
+    const refreshToken = generateRefreshTokenPayload(user.id, refreshJti);
 
-    await redis1.set(`rt_family:${user._id}`, JSON.stringify({ current: refreshToken, used: [] }), 'EX', 7 * 24 * 60 * 60);
+    await redis1.set(`rt_family:${user.id}`, JSON.stringify({ current: refreshToken, used: [] }), 'EX', 7 * 24 * 60 * 60);
 
     res.cookie('refreshToken', refreshToken, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', maxAge: 7 * 24 * 60 * 60 * 1000 });
     res.cookie('jwt', token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', maxAge: 24 * 60 * 60 * 1000 });
 
     res.json({
-      user: {
-        _id: user._id,
-        name: user.name,
-        username: user.username,
-        email: user.email,
-        role: user.role,
-        avatarColor: user.avatarColor,
-      },
+      user: { id: user.id, name: user.name, username: user.username, email: user.email, role: user.role, avatarColor: user.avatarColor },
       token
     });
   } catch (error: any) {
@@ -159,7 +138,6 @@ export const refresh = async (req: AuthRequest, res: Response): Promise<void> =>
     const f = JSON.parse(familyData);
 
     if (f.used.includes(token)) {
-      // Reuse attack detected!
       await redis1.del(`rt_family:${payload.userId}`);
       res.status(401).json({ error: 'Refresh token reuse detected. Re-login required.' });
       return;
@@ -204,7 +182,7 @@ export const logout = async (req: AuthRequest, res: Response): Promise<void> => 
     }
     
     if (req.user) {
-      await redis1.del(`rt_family:${req.user._id}`);
+      await redis1.del(`rt_family:${req.user.id}`);
     }
 
     res.clearCookie('jwt');
@@ -216,26 +194,8 @@ export const logout = async (req: AuthRequest, res: Response): Promise<void> => 
 };
 
 export const getMe = async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    if (!req.user) {
-      res.status(401).json({ error: 'Not authenticated' });
-      return;
-    }
-
-    res.json({
-      user: {
-        _id: req.user._id,
-        name: req.user.name,
-        username: req.user.username,
-        email: req.user.email,
-        role: req.user.role,
-        avatarColor: req.user.avatarColor,
-        createdAt: req.user.createdAt,
-      },
-    });
-  } catch (error: any) {
-    res.status(500).json({ error: 'Failed to get user profile' });
-  }
+  if (!req.user) { res.status(401).json({ error: 'Not authenticated' }); return; }
+  res.json({ user: req.user });
 };
 
 export const updateProfile = async (req: AuthRequest, res: Response): Promise<void> => {
@@ -245,15 +205,18 @@ export const updateProfile = async (req: AuthRequest, res: Response): Promise<vo
       return;
     }
 
-    const { name, avatarColor, aiPreferences } = req.body;
+    const { name, avatarColor } = req.body;
     const updates: any = {};
     if (name) updates.name = name;
     if (avatarColor) updates.avatarColor = avatarColor;
-    if (aiPreferences) updates.aiPreferences = aiPreferences;
 
-    const user = await User.findByIdAndUpdate(req.user._id, updates, { new: true }).select('-password');
-
-    res.json({ user });
+    const user = await prisma.user.update({
+      where: { id: req.user.id },
+      data: updates
+    });
+    
+    const { password, ...userWithoutPassword } = user;
+    res.json({ user: userWithoutPassword });
   } catch (error: any) {
     res.status(500).json({ error: 'Failed to update profile' });
   }
@@ -267,23 +230,20 @@ export const searchUsers = async (req: AuthRequest, res: Response): Promise<void
       return;
     }
 
-    // Sanitize regex special characters to prevent ReDoS
     const sanitized = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-    const users = await User.find({
-      $and: [
-        { _id: { $ne: req.user?._id } },
-        { isActive: true },
-        {
-          $or: [
-            { username: { $regex: sanitized, $options: 'i' } },
-            { name: { $regex: sanitized, $options: 'i' } },
-          ],
-        },
-      ],
-    })
-      .select('name username avatarColor role')
-      .limit(20);
+    const users = await prisma.user.findMany({
+      where: {
+        id: { not: req.user?.id },
+        isActive: true,
+        OR: [
+          { username: { contains: sanitized, mode: 'insensitive' } },
+          { name: { contains: sanitized, mode: 'insensitive' } },
+        ],
+      },
+      select: { id: true, name: true, username: true, avatarColor: true, role: true },
+      take: 20
+    });
 
     res.json({ users });
   } catch (error: any) {

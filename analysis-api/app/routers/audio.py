@@ -1,4 +1,5 @@
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
+from app.utils.auth import verify_token as auth_token
 import json
 import logging
 
@@ -52,7 +53,7 @@ async def audio_chunk_ws(websocket: WebSocket):
     except Exception as e:
         logger.error("Audio WS error: %s", e)
 
-@router.get("/status")
+@router.get("/status", dependencies=[Depends(auth_token)])
 async def audio_status():
     """Check audio analysis pipeline status."""
     try:

@@ -2,7 +2,8 @@
 
 All TimescaleDB queries go through asyncpg (via timescale_writer.get_pool).
 """
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Depends
+from app.utils.auth import verify_token as auth_token
 from fastapi.responses import StreamingResponse
 from app.utils.timescale_writer import get_pool
 from app.models.db import get_mongo_db
@@ -13,7 +14,7 @@ from datetime import datetime
 router = APIRouter()
 
 
-@router.get("/meeting/{meeting_id}")
+@router.get("/meeting/{meeting_id}", dependencies=[Depends(auth_token)])
 async def get_meeting_analytics(meeting_id: str):
     """Get post-meeting analytics from TimescaleDB."""
     try:
@@ -88,7 +89,7 @@ async def get_meeting_analytics(meeting_id: str):
         return {"error": str(e)}
 
 
-@router.get("/meeting/{meeting_id}/stream")
+@router.get("/meeting/{meeting_id}/stream", dependencies=[Depends(auth_token)])
 async def stream_meeting_analytics(meeting_id: str, request: Request):
     """
     Server-to-client only (SSE).  This endpoint never accepts data from
@@ -135,7 +136,7 @@ async def stream_meeting_analytics(meeting_id: str, request: Request):
     )
 
 
-@router.get("/meeting/{meeting_id}/heatmap")
+@router.get("/meeting/{meeting_id}/heatmap", dependencies=[Depends(auth_token)])
 async def get_focus_heatmap(meeting_id: str):
     """Generate focus heatmap data for post-meeting report."""
     try:

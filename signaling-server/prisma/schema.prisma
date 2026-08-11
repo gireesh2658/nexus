@@ -1,0 +1,99 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x", "debian-openssl-1.1.x", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("APP_DATABASE_URL")
+}
+
+model User {
+  id           String             @id @default(uuid())
+  name         String
+  username     String             @unique
+  email        String             @unique
+  password     String
+  avatarColor  String?
+  role         String             @default("participant")
+  isActive     Boolean            @default(true)
+  lastSeen     DateTime?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  hostedMeetings Meeting[]        @relation("MeetingHost")
+  participations Participant[]
+}
+
+model Meeting {
+  id                    String             @id @default(uuid())
+  title                 String
+  description           String?
+  roomCode              String             @unique
+  hostId                String
+  host                  User               @relation("MeetingHost", fields: [hostId], references: [id])
+  status                String             @default("waiting")
+  scheduledAt           DateTime?
+  scheduledDurationMins Int?
+  startedAt             DateTime?
+  endedAt               DateTime?
+  actualStartTime       DateTime?
+  actualEndTime         DateTime?
+  actualDurationSecs    Int?
+  analyticsEnabled      Boolean            @default(true)
+  moderationEnabled     Boolean            @default(true)
+  waitingRoomEnabled    Boolean            @default(true)
+  preventUnmute         Boolean            @default(false)
+  isLocked              Boolean            @default(false)
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+  participants          Participant[]
+  summary               MeetingSummary?
+  transcriptions        Transcription[]
+}
+
+model Participant {
+  id                      String             @id @default(uuid())
+  meetingId               String
+  userId                  String
+  status                  String             @default("pending")
+  invitedAt               DateTime           @default(now())
+  consentGiven            Boolean            @default(false)
+  consentTimestamp        DateTime?
+  meeting                 Meeting            @relation(fields: [meetingId], references: [id])
+  user                    User               @relation(fields: [userId], references: [id])
+  joinTime                DateTime           @default(now())
+  joinedAt                DateTime?
+  leaveTime               DateTime?
+  leftAt                  DateTime?
+  connectionInterruptions Int                @default(0)
+  timeInMeetingMs         Int                @default(0)
+  deviceInfo              String?
+  createdAt               DateTime           @default(now())
+  updatedAt               DateTime           @updatedAt
+
+  @@unique([meetingId, userId])
+}
+
+model MeetingSummary {
+  id               String             @id @default(uuid())
+  meetingId        String             @unique
+  meeting          Meeting            @relation(fields: [meetingId], references: [id])
+  summaryText      String
+  decisions        String[]
+  actionItems      Json[]
+  followUpEmail    String?
+  createdAt        DateTime           @default(now())
+}
+
+
+model Transcription {
+  id            String   @id @default(uuid())
+  meetingId     String
+  participantId String
+  text          String
+  startTimeMs   Int
+  endTimeMs     Int
+  createdAt     DateTime @default(now())
+
+  meeting       Meeting  @relation(fields: [meetingId], references: [id])
+}

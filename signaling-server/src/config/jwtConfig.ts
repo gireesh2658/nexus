@@ -13,7 +13,8 @@ const isProd = process.env.NODE_ENV === 'production';
 // Development: HS256 with a stable secret
 const algorithm = (isProd && process.env.JWT_PRIVATE_KEY) ? 'RS256' as const : 'HS256' as const;
 
-const secret = process.env.JWT_SECRET || 'nexus_dev_secret_key_64_chars_minimum_for_jwt_signing_replace_in_production_asap_ok';
+const secret = process.env.JWT_SECRET;
+if (!secret) throw new Error('FATAL: JWT_SECRET is not set.');
 
 export const jwtConfig = {
   // For HS256, privateKey / publicKey both resolve to the symmetric secret.

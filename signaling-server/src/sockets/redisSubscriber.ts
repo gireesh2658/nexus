@@ -3,12 +3,24 @@ import Redis from 'ioredis';
 
 export const initRedisSubscriber = (io: Server) => {
   const rawUrl = process.env.REDIS_URL;
-  if (!rawUrl) throw new Error('FATAL: REDIS_URL environment variable is missing.');
+  if (!rawUrl) {
+    console.warn('[Redis] REDIS_URL not set — skipping Pub/Sub subscriber.');
+    return;
+  }
   const baseUrl = rawUrl.replace(/\/\d+$/, '');   // strip trailing /N
   const signalDb = parseInt(process.env.SIGNAL_REDIS_DB || '0', 10);
 
-  // Create a dedicated Redis connection for Pub/Sub on DB 0
-  const subscriber = new Redis(`${baseUrl}/0`);
+  const subscriber = new Redis(`${baseUrl}/${signalDb}`, {
+    maxRetriesPerRequest: 3,
+    retryStrategy(times) {
+      if (times > 5) {
+        console.warn('[Redis] Subscriber giving up after 5 retries.');
+        return null;
+      }
+      return Math.min(times * 500, 3000);
+    },
+    enableOfflineQueue: false,
+  });
 
   subscriber.on('connect', () => {
     console.log(`[Redis] Subscriber connected to DB ${signalDb} for ML events`);

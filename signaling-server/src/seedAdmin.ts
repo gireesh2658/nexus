@@ -1,19 +1,15 @@
-import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
 import path from 'path';
-import User from './models/User';
+import { PrismaClient } from '@prisma/client';
 
 // Load .env from parent directory
 dotenv.config({ path: path.join(__dirname, '../../.env') });
 
+const prisma = new PrismaClient();
+
 const seedAdmin = async () => {
   try {
-    const mongoUri = process.env.MONGO_URI;
-    if (!mongoUri) {
-      throw new Error('MONGO_URI is not defined in .env');
-    }
-
     const email = process.env.ADMIN_EMAIL;
     const password = process.env.ADMIN_PASSWORD;
     const username = process.env.ADMIN_USERNAME || 'admin';
@@ -30,29 +26,32 @@ const seedAdmin = async () => {
       throw new Error('ADMIN_PASSWORD must be at least 8 characters.');
     }
 
-    console.log('Connecting to MongoDB...');
-    await mongoose.connect(mongoUri);
-    console.log('Connected to MongoDB.');
+    console.log('Connecting to PostgreSQL...');
+    await prisma.$connect();
+    console.log('Connected to PostgreSQL.');
 
-    // Check if user already exists
-    let adminUser = await User.findOne({ email });
+    let adminUser = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
 
     if (adminUser) {
       console.log('Admin user already exists. Updating role and password...');
-      adminUser.role = 'admin';
-      adminUser.password = await bcrypt.hash(password, 12);
-      await adminUser.save();
+      const hashedPassword = await bcrypt.hash(password, 12);
+      await prisma.user.update({
+        where: { id: adminUser.id },
+        data: { role: 'admin', password: hashedPassword }
+      });
       console.log('Admin user updated successfully.');
     } else {
       console.log('Creating new admin user...');
       const hashedPassword = await bcrypt.hash(password, 12);
-      adminUser = await User.create({
-        name,
-        username: username.toLowerCase(),
-        email: email.toLowerCase(),
-        password: hashedPassword,
-        role: 'admin',
-        avatarColor: '#FFD600',
+      adminUser = await prisma.user.create({
+        data: {
+          name,
+          username: username.toLowerCase(),
+          email: email.toLowerCase(),
+          password: hashedPassword,
+          role: 'admin',
+          avatarColor: '#FFD600',
+        }
       });
       console.log('Admin user created successfully.');
     }
@@ -66,8 +65,8 @@ const seedAdmin = async () => {
   } catch (error) {
     console.error('Error seeding admin user:', error);
   } finally {
-    await mongoose.disconnect();
-    console.log('Disconnected from MongoDB.');
+    await prisma.$disconnect();
+    console.log('Disconnected from PostgreSQL.');
   }
 };
 

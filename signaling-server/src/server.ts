@@ -30,12 +30,15 @@ if (process.env.NODE_ENV !== 'production') {
 const ALLOWED_ORIGINS: string[] = [...new Set(allowedOriginsString.split(',').map(s => s.trim()).filter(Boolean))];
 
 // HTTPS redirect (production only, behind a reverse proxy)
-app.use((req, res, next) => {
-  if (process.env.NODE_ENV === 'production' && req.headers['x-forwarded-proto'] !== 'https') {
-    return res.redirect(301, 'https://' + req.headers.host + req.url);
-  }
-  next();
-});
+// app.use((req, res, next) => {
+//   if (process.env.NODE_ENV === 'production' && req.headers['x-forwarded-proto'] !== 'https') {
+//     return res.redirect(301, 'https://' + req.headers.host + req.url);
+//   }
+//   next();
+// });
+
+// Trust proxy (required for secure cookies and rate limiting behind reverse proxies)
+app.set('trust proxy', 1);
 
 // Security headers (Helmet)
 app.use(helmet({
@@ -91,7 +94,7 @@ app.use((req, res, next) => {
 });
 
 // Rate Limiting
-// app.use('/api/', apiLimiter);
+app.use('/api/', apiLimiter);
 
 // Health check
 app.get('/api/health', (_req, res) => {
@@ -99,8 +102,8 @@ app.get('/api/health', (_req, res) => {
 });
 
 // API Routes
-// app.use('/api/auth/login', authLimiter);
-// app.use('/api/auth/register', authLimiter);
+app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/register', authLimiter);
 app.use('/api/auth', authRoutes);
 app.use('/api/meetings', meetingRoutes);
 

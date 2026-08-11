@@ -1,46 +1,168 @@
 services:
-
   frontend:
     build: ./frontend
     ports: ['3000:80']
     environment:
       - VITE_SIGNAL_URL=http://localhost:4000
+      - VITE_ANALYSIS_URL=ws://localhost:8000
     depends_on:
-      signaling-server:
-        condition: service_healthy
-      analysis-api:
-        condition: service_healthy
+      - signaling-server
+      - analysis-api
 
   signaling-server:
     build: ./signaling-server
     ports: ['4000:4000']
     environment:
-      - MONGO_URI=${MONGO_URI}
-      - JWT_SECRET=${JWT_SECRET}
-      - REDIS_URL=${REDIS_URL}
+      - DATABASE_URL=${APP_DATABASE_URL}
+      - JWT_SECRET=${JWT_SECRET:-supersecretjwt}
+      - REDIS_URL=redis://redis:6379/0
       - SIGNAL_REDIS_DB=2
       - ALLOWED_ORIGIN=http://localhost:3000
       - NODE_ENV=production
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4000/api/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
+      - LIVEKIT_API_KEY=devkey
+      - LIVEKIT_API_SECRET=secret12345678901234567890123456789012
+      - LIVEKIT_WS_URL=ws://localhost:7880
+    depends_on:
+      - redis
 
   analysis-api:
     build: ./analysis-api
     ports: ['8000:8000']
     environment:
-      - MONGO_URI=${MONGO_URI}
-      - TIMESCALE_URL=${TIMESCALE_URL}
-      - REDIS_URL=${REDIS_URL}
-      - CELERY_BROKER=${CELERY_BROKER}
-      - SIGNAL_REDIS_DB=2
-    volumes: ['./analysis-api/models:/app/models']
+      - DATABASE_URL=${APP_DATABASE_URL}
+      - REDIS_URL=redis://redis:6379/0
+      - KAFKA_BROKERS=redpanda:29092
+      - ALLOWED_ORIGIN=http://localhost:3000,http://localhost:5173
+      - JWT_SECRET=${JWT_SECRET:-supersecretjwt}
+      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY}
+      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
+      - LIVEKIT_URL=${LIVEKIT_WS_URL}
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes: 
+      - './analysis-api/models:/app/models'
+
+  redpanda:
+    image: redpandadata/redpanda:latest
+    command:
+      - redpanda
+      - start
+      - --smp
+      - '1'
+      - --memory
+      - 1G
+      - --reserve-memory
+      - 0M
+      - --overprovisioned
+      - --node-id
+      - '0'
+      - --kafka-addr
+      - PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:9092
+      - --advertise-kafka-addr
+      - PLAINTEXT://redpanda:29092,OUTSIDE://localhost:9092
+    ports:
+      - '9092:9092'
+      - '29092:29092'
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
+      test: ["CMD-SHELL", "rpk cluster health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  nexus-timescale:
+    image: timescale/timescaledb:latest-pg15
+    container_name: nexus-timescale
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=nexus
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata_telemetry:/var/lib/postgresql/data
+      - ./analysis-api/init_telemetry.sql:/docker-entrypoint-initdb.d/init_telemetry.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d nexus"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  telemetry-worker:
+    build: ./analysis-api
+    command: python -u -m app.workers.telemetry_sink
+    environment:
+      - TELEMETRY_DATABASE_URL=${TELEMETRY_DATABASE_URL}
+      - KAFKA_BROKERS=redpanda:29092
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      nexus-timescale:
+        condition: service_healthy
+
+  transcript-worker:
+    build: ./analysis-api
+    command: python -u -m app.workers.transcript_sink
+    environment:
+      - APP_DATABASE_URL=${APP_DATABASE_URL}
+      - KAFKA_BROKERS=redpanda:29092
+    depends_on:
+      redpanda:
+        condition: service_healthy
+
+  room-egress-worker:
+    build: ./analysis-api
+    command: python -u -m app.workers.room_egress_worker
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+    environment:
+      - KAFKA_BROKERS=redpanda:29092
+      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY}
+      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
+      - LIVEKIT_URL=${LIVEKIT_WS_URL}
+    depends_on:
+      redpanda:
+        condition: service_healthy
+
+  cc-broadcaster:
+    build: ./analysis-api
+    command: python -u -m app.workers.cc_broadcaster
+    environment:
+      - KAFKA_BROKERS=redpanda:29092
+      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY}
+      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
+      - LIVEKIT_URL=${LIVEKIT_WS_URL}
+    depends_on:
+      redpanda:
+        condition: service_healthy
+
+  meeting-summarizer:
+    build: ./analysis-api
+    command: python -u -m app.workers.meeting_summarizer
+    environment:
+      - KAFKA_BROKERS=redpanda:29092
+      - APP_DATABASE_URL=${APP_DATABASE_URL}
+      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434/api/generate}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3}
+    depends_on:
+      redpanda:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '6379:6379'
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata_telemetry:
+

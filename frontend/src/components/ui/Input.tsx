@@ -11,17 +11,17 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
     return (
       <div className="w-full flex flex-col gap-1.5">
         {label && (
-          <label className="text-sm font-medium text-nexus-muted">
+          <label className="text-label-sm text-nexus-muted">
             {label}
           </label>
         )}
         <div className="relative">
           <input
             ref={ref}
-            className={`w-full bg-black/40 border rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-1 transition-all
+            className={`w-full bg-nexus-surface border rounded-card px-4 py-3 text-nexus-text text-body focus:outline-none focus:ring-1 transition-all placeholder:text-nexus-muted/60
               ${error 
                 ? 'border-nexus-danger focus:border-nexus-danger focus:ring-nexus-danger' 
-                : 'border-nexus-border focus:border-nexus-primary focus:ring-nexus-primary'
+                : 'border-nexus-border hover:border-nexus-borderHover focus:border-nexus-primary focus:ring-nexus-primary'
               } ${className}`}
             {...props}
           />
