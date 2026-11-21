@@ -6,10 +6,10 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "test": "tsx ../frontend/src/utils/focusStateMachine.test.ts"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.24.1",
     "@prisma/client": "^5.22.0",
     "bcryptjs": "^2.4.3",
     "cookie-parser": "^1.4.7",
@@ -23,7 +23,6 @@
     "livekit-server-sdk": "^2.15.5",
     "nanoid": "^5.0.7",
     "nodemailer": "^9.0.1",
-    "pg": "^8.22.0",
     "rate-limit-redis": "^5.0.0",
     "socket.io": "^4.7.5"
   },

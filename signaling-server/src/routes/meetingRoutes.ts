@@ -1,5 +1,17 @@
 import { Router } from 'express';
-import { createMeeting, getMyMeetings, getMeetingById, getMeetingByRoomCode, updateMeetingStatus, respondToInvite, giveConsent, generateLiveKitToken, endMeeting, getMeetingSummary } from '../controllers/meetingController';
+import {
+  createMeeting,
+  getMyMeetings,
+  getMeetingById,
+  getMeetingByRoomCode,
+  updateMeetingStatus,
+  respondToInvite,
+  giveConsent,
+  generateLiveKitToken,
+  endMeeting,
+  getMeetingSummary,
+  cancelMeeting
+} from '../controllers/meetingController';
 import { authMiddleware } from '../middleware/authMiddleware';
 
 const router = Router();
@@ -16,6 +28,7 @@ router.patch('/:id/status', updateMeetingStatus);
 router.post('/:id/respond', respondToInvite);
 router.post('/:id/consent', giveConsent);
 router.post('/:id/end', endMeeting);
+router.post('/:id/cancel', cancelMeeting);
 router.get('/:id/summary', getMeetingSummary);
 
 export default router;

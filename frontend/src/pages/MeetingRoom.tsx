@@ -14,6 +14,8 @@ import ChatPanel from '../components/meeting/ChatPanel';
 import WhiteboardPanel from '../components/meeting/WhiteboardPanel';
 import TranscriptPanel from '../components/meeting/TranscriptPanel';
 import SocketListener from '../components/meeting/SocketListener';
+import { ClosedCaptions } from '../components/ClosedCaptions';
+import { TelemetryTracker } from '../components/TelemetryTracker';
 
 const formatTime = (seconds: number) => {
   const h = Math.floor(seconds / 3600);
@@ -32,10 +34,11 @@ const MeetingRoom = () => {
   
   const [token, setToken] = useState<string>('');
   const [wsUrl, setWsUrl] = useState<string>('');
+  const [isHost, setIsHost] = useState<boolean>(false);
   const [preJoinChoices, setPreJoinChoices] = useState<LocalUserChoices | undefined>(undefined);
   
   // Meeting State Machine
-  const [meetingState, setMeetingState] = useState<'initializing' | 'waiting' | 'active' | 'ended'>('initializing');
+  const [meetingState, setMeetingState] = useState<'initializing' | 'waiting' | 'active' | 'ended'>('active');
   const [actualStartTime, setActualStartTime] = useState<Date | null>(null);
   const [elapsedSecs, setElapsedSecs] = useState<number>(0);
   const [scheduledDurationMins, setScheduledDurationMins] = useState<number>(60); // Default, should fetch from API ideally
@@ -47,7 +50,26 @@ const MeetingRoom = () => {
         const { data } = await api.get(`/meetings/room/${id}/token`);
         setToken(data.token);
         setWsUrl(data.wsUrl);
-        if (data.consentGiven !== undefined) setConsentGiven(data.consentGiven);
+        if (data.isHost !== undefined) setIsHost(data.isHost);
+        if (data.consentGiven !== undefined) {
+          setConsentGiven(data.consentGiven);
+        }
+        if (data.meetingId) {
+          useMeetingStore.getState().setCurrentMeeting({
+            id: data.meetingId,
+            roomCode: id,
+            title: '',
+            hostId: data.hostId || '',
+            scheduledAt: '',
+            scheduledDurationMins: data.scheduledDurationMins || 60,
+            status: 'active',
+            analyticsEnabled: true,
+            moderationEnabled: true,
+            waitingRoomEnabled: false,
+            createdAt: '',
+            updatedAt: ''
+          } as any);
+        }
         if (data.scheduledDurationMins) setScheduledDurationMins(data.scheduledDurationMins);
       } catch (error) {
         console.error('Failed to fetch LiveKit token', error);
@@ -73,24 +95,41 @@ const MeetingRoom = () => {
         });
 
         socket.on('waiting-room-status', () => setMeetingState('waiting'));
-        socket.on('admitted', (data) => {
-          setActualStartTime(new Date(data.actualStartTime));
+        socket.on('admitted', (data: { actualStartTime?: Date | string }) => {
+          if (data?.actualStartTime) setActualStartTime(new Date(data.actualStartTime));
           setMeetingState('active');
         });
-        socket.on('meeting-started', (data) => {
-          setActualStartTime(new Date(data.actualStartTime));
+        socket.on('meeting-started', (data: { actualStartTime?: Date | string }) => {
+          if (data?.actualStartTime) setActualStartTime(new Date(data.actualStartTime));
           setMeetingState('active');
         });
-        socket.on('meeting-ended-by-host', (data) => {
-           setMeetingState('ended');
-           setTimeout(() => navigate(`/meeting/${id}/summary`), data.redirectAfter || 3000);
+        socket.on('user-joined', (data: { actualStartTime?: Date | string }) => {
+          if (data?.actualStartTime) setActualStartTime(new Date(data.actualStartTime));
+          setMeetingState((prev) => (prev === 'waiting' ? 'waiting' : 'active'));
         });
+        socket.on('room-status', (data: { status?: string; actualStartTime?: Date | string }) => {
+          if (data?.actualStartTime) setActualStartTime(new Date(data.actualStartTime));
+          if (data?.status === 'waiting') setMeetingState('waiting');
+          else if (data?.status === 'ended') setMeetingState('ended');
+          else setMeetingState('active');
+        });
+        let hasHandledEnd = false;
+        const handleMeetingEnded = (data?: { meetingId?: string; redirectAfter?: number }) => {
+          if (hasHandledEnd) return;
+          hasHandledEnd = true;
+          setMeetingState('ended');
+          const targetId = data?.meetingId || id;
+          setTimeout(() => {
+            navigate(`/meeting/${targetId}/summary`);
+          }, data?.redirectAfter || 2000);
+        };
+
+        socket.on('meeting-ended', handleMeetingEnded);
+        socket.on('meeting-ended-by-host', handleMeetingEnded);
         socket.on('denied', () => {
            toast.error('The host denied your entry.');
            navigate('/dashboard');
         });
-        
-        // If we don't get a waiting-room-status immediately, assume active (socket logic handles immediate emits if active)
       });
     }
     
@@ -99,6 +138,9 @@ const MeetingRoom = () => {
          socketService.getSocket()?.off('waiting-room-status');
          socketService.getSocket()?.off('admitted');
          socketService.getSocket()?.off('meeting-started');
+         socketService.getSocket()?.off('user-joined');
+         socketService.getSocket()?.off('room-status');
+         socketService.getSocket()?.off('meeting-ended');
          socketService.getSocket()?.off('meeting-ended-by-host');
          socketService.getSocket()?.off('denied');
        });
@@ -127,7 +169,6 @@ const MeetingRoom = () => {
     }
   }, [meetingState, actualStartTime, scheduledDurationMins]);
 
-  const isHost = user?.role === 'host';
   const showRightPanel = isHost || activePanel !== 'none';
 
   const renderRightPanel = () => {
@@ -266,7 +307,9 @@ const MeetingRoom = () => {
         )}
       </div>
 
-      <ControlBar />
+      <ClosedCaptions />
+      <TelemetryTracker />
+      <ControlBar isHost={isHost} />
     </LiveKitRoom>
   );
 };

@@ -14,5 +14,6 @@ CREATE TABLE IF NOT EXISTS meeting_telemetry (
 -- 3. Convert the table into a Timescale Hypertable
 SELECT create_hypertable('meeting_telemetry', 'recorded_at', if_not_exists => TRUE);
 
--- 4. Create a GIN index on the JSONB payload for ultra-fast deep key querying
-CREATE INDEX idx_telemetry_payload_gin ON meeting_telemetry USING GIN (payload);
+-- 4. Create indexes on meeting_telemetry for fast querying
+CREATE INDEX IF NOT EXISTS idx_telemetry_payload_gin ON meeting_telemetry USING GIN (payload);
+CREATE INDEX IF NOT EXISTS idx_telemetry_meeting_time ON meeting_telemetry (meeting_id, recorded_at DESC);

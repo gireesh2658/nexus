@@ -8,25 +8,53 @@ logger = logging.getLogger(__name__)
 
 _pool: asyncpg.Pool | None = None
 
+import urllib.parse
+
+def clean_pg_url(url: str) -> str:
+    if not url:
+        return url
+    parsed = urllib.parse.urlparse(url)
+    return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, parsed.path, '', '', ''))
+
 async def get_pool() -> asyncpg.Pool:
     """Get or create the asyncpg connection pool."""
     global _pool
     if _pool is None:
-        timescale_url = os.getenv("TIMESCALE_URL")
+        timescale_url = os.getenv("TELEMETRY_DATABASE_URL")
         if not timescale_url:
-            raise ValueError("FATAL: TIMESCALE_URL environment variable is missing.")
-        _pool = await asyncpg.create_pool(timescale_url, min_size=2, max_size=10)
+            raise ValueError("FATAL: TELEMETRY_DATABASE_URL environment variable is missing.")
+        clean_url = clean_pg_url(timescale_url)
+        _pool = await asyncpg.create_pool(clean_url, min_size=2, max_size=10)
     return _pool
 
 async def init_timescale():
     """Initialize TimescaleDB schema (called once at startup)."""
     pool = await get_pool()
     async with pool.acquire() as conn:
+        # 1. Initialize meeting_telemetry hypertable
+        await conn.execute("""
+            CREATE EXTENSION IF NOT EXISTS timescaledb;
+
+            CREATE TABLE IF NOT EXISTS meeting_telemetry (
+                recorded_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                meeting_id      TEXT NOT NULL,
+                participant_id  TEXT NOT NULL,
+                payload         JSONB NOT NULL
+            );
+        """)
+        try:
+            await conn.execute("SELECT create_hypertable('meeting_telemetry', 'recorded_at', if_not_exists => TRUE);")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_payload_gin ON meeting_telemetry USING GIN (payload);")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_meeting_time ON meeting_telemetry (meeting_id, recorded_at DESC);")
+        except Exception as e:
+            logger.info("TimescaleDB meeting_telemetry hypertable/indexes already exist: %s", e)
+
+        # 2. Initialize focus_events hypertable
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS focus_events (
                 focus_id        BIGSERIAL,
-                participant_id  VARCHAR(24) NOT NULL,
-                meeting_id      VARCHAR(24) NOT NULL,
+                participant_id  VARCHAR(128) NOT NULL,
+                meeting_id      VARCHAR(128) NOT NULL,
                 visual_score    FLOAT,
                 behavioral_score FLOAT,
                 audio_score     FLOAT,
@@ -37,15 +65,27 @@ async def init_timescale():
             );
         """)
         
-        # Try to create hypertable (will fail silently if already exists)
+        # Try to create hypertable and configure policies
         try:
             await conn.execute("SELECT create_hypertable('focus_events', 'recorded_at', if_not_exists => TRUE);")
             
+            # Enable columnstore compression before attaching compression policy
+            try:
+                await conn.execute("""
+                    ALTER TABLE focus_events SET (
+                        timescaledb.compress,
+                        timescaledb.compress_segmentby = 'meeting_id, participant_id',
+                        timescaledb.compress_orderby = 'recorded_at DESC'
+                    );
+                """)
+            except Exception as ce:
+                logger.debug("Columnstore already enabled or unsupported: %s", ce)
+
             # Compression and Retention policies
             await conn.execute("SELECT add_compression_policy('focus_events', INTERVAL '7 days', if_not_exists => TRUE);")
             await conn.execute("SELECT add_retention_policy('focus_events', INTERVAL '90 days', if_not_exists => TRUE);")
         except Exception as e:
-            logger.info("TimescaleDB hypertable/policies already exist or unavailable: %s", e)
+            logger.info("TimescaleDB focus_events hypertable/policies already exist or unavailable: %s", e)
         
         # Create composite index for efficient meeting queries
         await conn.execute("""
@@ -63,8 +103,8 @@ async def init_timescale():
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS participant_baselines (
                 id                BIGSERIAL    PRIMARY KEY,
-                participant_id    VARCHAR(24)  NOT NULL,
-                meeting_id        VARCHAR(24)  NOT NULL,
+                participant_id    VARCHAR(128) NOT NULL,
+                meeting_id        VARCHAR(128) NOT NULL,
                 baseline_visual   FLOAT        NOT NULL DEFAULT 0.0,
                 baseline_behav    FLOAT        NOT NULL DEFAULT 0.0,
                 baseline_audio    FLOAT        NOT NULL DEFAULT 0.0,

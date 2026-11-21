@@ -5,15 +5,35 @@ import { prisma } from '../config/db';
 import { AccessToken } from 'livekit-server-sdk';
 import { io } from '../server';
 import { sendEmail } from '../services/mailer';
+import { isMeetingExpired, isValidStatusTransition, expireStaleMeetings, VALID_STATUSES } from '../services/meetingLifecycle';
 
 export const createMeeting = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     if (!req.user) { res.status(401).json({ error: 'Not authenticated' }); return; }
 
-    const { title, description, participantUsernames, scheduledAt, scheduledDurationMins, analyticsEnabled, moderationEnabled } = req.body;
+    const { title, description, participantUsernames, scheduledAt, scheduledDurationMins, analyticsEnabled, moderationEnabled, waitingRoomEnabled } = req.body;
 
     if (!title || !scheduledAt || !scheduledDurationMins) {
       res.status(400).json({ error: 'Title, scheduledAt, and scheduledDurationMins are required' });
+      return;
+    }
+
+    const scheduledTime = new Date(scheduledAt).getTime();
+    if (isNaN(scheduledTime)) {
+      res.status(400).json({ error: 'Invalid scheduledAt format' });
+      return;
+    }
+
+    const duration = parseInt(scheduledDurationMins as any, 10);
+    if (isNaN(duration) || duration <= 0) {
+      res.status(400).json({ error: 'scheduledDurationMins must be a positive integer' });
+      return;
+    }
+
+    // Do not allow scheduling a meeting whose validity window has completely passed
+    const expiryThreshold = scheduledTime + (duration * 60 * 1000) + (15 * 60 * 1000);
+    if (Date.now() > expiryThreshold) {
+      res.status(400).json({ error: 'Cannot schedule a meeting whose scheduled window has already passed' });
       return;
     }
 
@@ -43,19 +63,23 @@ export const createMeeting = async (req: AuthRequest, res: Response): Promise<vo
         description: description || '',
         hostId: req.user.id,
         scheduledAt: new Date(scheduledAt),
-        scheduledDurationMins,
+        scheduledDurationMins: duration,
+        status: 'scheduled',
         analyticsEnabled: analyticsEnabled !== false,
         moderationEnabled: moderationEnabled !== false,
+        waitingRoomEnabled: waitingRoomEnabled === true,
         roomCode,
       },
     });
 
-    const participantDocs = users.map((user: any) => ({
-      meetingId: meeting.id,
-      userId: user.id,
-      status: 'pending',
-      invitedAt: new Date(),
-    }));
+    const participantDocs = users
+      .filter((user: any) => user.id !== req.user.id)
+      .map((user: any) => ({
+        meetingId: meeting.id,
+        userId: user.id,
+        status: 'pending',
+        invitedAt: new Date(),
+      }));
 
     // Add host as a participant too
     participantDocs.push({
@@ -83,16 +107,18 @@ export const getMyMeetings = async (req: AuthRequest, res: Response): Promise<vo
   try {
     if (!req.user) { res.status(401).json({ error: 'Not authenticated' }); return; }
 
+    // Proactive lifecycle sweep: expire any stale scheduled meetings
+    await expireStaleMeetings();
+
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 20;
     const skip = (page - 1) * limit;
+    const filter = ((req.query.filter as string) || (req.query.type as string) || 'all').toLowerCase();
 
-    const hostedMeetings = await prisma.meeting.findMany({
+    const hostedMeetingsRaw = await prisma.meeting.findMany({
       where: { hostId: req.user.id },
       include: { host: { select: { name: true, username: true, avatarColor: true } } },
       orderBy: { scheduledAt: 'desc' },
-      skip,
-      take: limit
     });
 
     const participantRecords = await prisma.participant.findMany({
@@ -101,18 +127,51 @@ export const getMyMeetings = async (req: AuthRequest, res: Response): Promise<vo
     });
     const participantMeetingIds = participantRecords.map((p: any) => p.meetingId);
 
-    const invitedMeetings = await prisma.meeting.findMany({
+    const invitedMeetingsRaw = await prisma.meeting.findMany({
       where: {
         id: { in: participantMeetingIds },
         hostId: { not: req.user.id },
       },
       include: { host: { select: { name: true, username: true, avatarColor: true } } },
       orderBy: { scheduledAt: 'desc' },
-      skip,
-      take: limit
     });
 
-    res.json({ hosted: hostedMeetings, invited: invitedMeetings });
+    const isUpcoming = (m: any) => (m.status === 'scheduled' || m.status === 'waiting' || m.status === 'active') && !isMeetingExpired(m);
+    const isActive = (m: any) => m.status === 'active';
+    const isHistory = (m: any) => m.status === 'ended' || m.status === 'cancelled' || m.status === 'expired' || isMeetingExpired(m);
+
+    let hosted = hostedMeetingsRaw;
+    let invited = invitedMeetingsRaw;
+
+    if (filter === 'upcoming') {
+      hosted = hostedMeetingsRaw.filter(isUpcoming);
+      invited = invitedMeetingsRaw.filter(isUpcoming);
+    } else if (filter === 'active') {
+      hosted = hostedMeetingsRaw.filter(isActive);
+      invited = invitedMeetingsRaw.filter(isActive);
+    } else if (filter === 'history' || filter === 'past') {
+      hosted = hostedMeetingsRaw.filter(isHistory);
+      invited = invitedMeetingsRaw.filter(isHistory);
+    }
+
+    const allUpcoming = [...hostedMeetingsRaw, ...invitedMeetingsRaw].filter(isUpcoming);
+    const allHistory = [...hostedMeetingsRaw, ...invitedMeetingsRaw].filter(isHistory);
+    const allActive = [...hostedMeetingsRaw, ...invitedMeetingsRaw].filter(isActive);
+
+    res.json({
+      hosted: hosted.slice(skip, skip + limit),
+      invited: invited.slice(skip, skip + limit),
+      upcoming: allUpcoming.slice(skip, skip + limit),
+      history: allHistory.slice(skip, skip + limit),
+      active: allActive.slice(skip, skip + limit),
+      total: {
+        hosted: hosted.length,
+        invited: invited.length,
+        upcoming: allUpcoming.length,
+        history: allHistory.length,
+        active: allActive.length,
+      }
+    });
   } catch (error: any) {
     res.status(500).json({ error: 'Failed to fetch meetings' });
   }
@@ -130,6 +189,11 @@ export const getMeetingById = async (req: AuthRequest, res: Response): Promise<v
     if (!meeting) {
       res.status(404).json({ error: 'Meeting not found' });
       return;
+    }
+
+    if (isMeetingExpired(meeting) && meeting.status !== 'expired') {
+      await prisma.meeting.update({ where: { id: meeting.id }, data: { status: 'expired' } });
+      meeting.status = 'expired';
     }
 
     const isHost = meeting.hostId === req.user.id;
@@ -167,6 +231,11 @@ export const getMeetingByRoomCode = async (req: AuthRequest, res: Response): Pro
       return;
     }
 
+    if (isMeetingExpired(meeting) && meeting.status !== 'expired') {
+      await prisma.meeting.update({ where: { id: meeting.id }, data: { status: 'expired' } });
+      meeting.status = 'expired';
+    }
+
     const isHost = meeting.hostId === req.user.id;
     const isParticipant = await prisma.participant.findFirst({
       where: { meetingId: meeting.id, userId: req.user.id }
@@ -193,9 +262,8 @@ export const updateMeetingStatus = async (req: AuthRequest, res: Response): Prom
     if (!req.user) { res.status(401).json({ error: 'Not authenticated' }); return; }
 
     const { status } = req.body;
-    const allowedStatuses = ['scheduled', 'active', 'ended', 'cancelled'];
-    if (!status || !allowedStatuses.includes(status)) {
-      res.status(400).json({ error: `Invalid status. Must be one of: ${allowedStatuses.join(', ')}` });
+    if (!status || !VALID_STATUSES.includes(status as any)) {
+      res.status(400).json({ error: `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}` });
       return;
     }
 
@@ -210,6 +278,18 @@ export const updateMeetingStatus = async (req: AuthRequest, res: Response): Prom
       return;
     }
 
+    if (isMeetingExpired(meeting) && meeting.status !== 'expired') {
+      await prisma.meeting.update({ where: { id: meeting.id }, data: { status: 'expired' } });
+      meeting.status = 'expired';
+    }
+
+    if (!isValidStatusTransition(meeting.status, status)) {
+      res.status(400).json({
+        error: `Cannot transition meeting from '${meeting.status}' to '${status}'. Terminal meetings (ended, cancelled, or expired) cannot be modified.`
+      });
+      return;
+    }
+
     const updates: any = { status };
     if (status === 'ended') {
       const startTime = meeting.actualStartTime || meeting.scheduledAt || new Date();
@@ -217,6 +297,10 @@ export const updateMeetingStatus = async (req: AuthRequest, res: Response): Prom
       updates.actualEndTime = endTime;
       updates.endedAt = endTime;
       updates.actualDurationSecs = Math.floor((endTime.getTime() - startTime.getTime()) / 1000);
+    } else if (status === 'active' && !meeting.actualStartTime) {
+      const now = new Date();
+      updates.actualStartTime = now;
+      updates.startedAt = now;
     }
 
     const updatedMeeting = await prisma.meeting.update({
@@ -227,6 +311,37 @@ export const updateMeetingStatus = async (req: AuthRequest, res: Response): Prom
     res.json({ meeting: updatedMeeting });
   } catch (error: any) {
     res.status(500).json({ error: 'Failed to update meeting status' });
+  }
+};
+
+export const cancelMeeting = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.user) { res.status(401).json({ error: 'Not authenticated' }); return; }
+    const { id } = req.params;
+    const meeting = await prisma.meeting.findFirst({
+      where: { OR: [{ id }, { roomCode: id }] }
+    });
+    if (!meeting) { res.status(404).json({ error: 'Meeting not found' }); return; }
+    if (meeting.hostId !== req.user.id && req.user.role !== 'admin') {
+      res.status(403).json({ error: 'Only the host can cancel the meeting' });
+      return;
+    }
+    if (meeting.status === 'ended' || meeting.status === 'expired') {
+      res.status(400).json({ error: `Cannot cancel a meeting that is already ${meeting.status}` });
+      return;
+    }
+    if (meeting.status === 'cancelled') {
+      res.json({ message: 'Meeting was already cancelled', meeting });
+      return;
+    }
+    const updated = await prisma.meeting.update({
+      where: { id: meeting.id },
+      data: { status: 'cancelled' }
+    });
+    io.to(`meeting:${meeting.id}`).emit('meeting-cancelled', { meetingId: meeting.id, roomCode: meeting.roomCode });
+    res.json({ message: 'Meeting cancelled successfully', meeting: updated });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to cancel meeting' });
   }
 };
 
@@ -265,12 +380,35 @@ export const giveConsent = async (req: AuthRequest, res: Response): Promise<void
   try {
     if (!req.user) { res.status(401).json({ error: 'Not authenticated' }); return; }
 
-    const participant = await prisma.participant.findFirst({
-      where: { meetingId: req.params.id, userId: req.user.id }
+    const meeting = await prisma.meeting.findFirst({
+      where: {
+        OR: [
+          { id: req.params.id },
+          { roomCode: req.params.id }
+        ]
+      }
+    });
+
+    if (!meeting) {
+      res.status(404).json({ error: 'Meeting not found' });
+      return;
+    }
+
+    let participant = await prisma.participant.findFirst({
+      where: { meetingId: meeting.id, userId: req.user.id }
     });
 
     if (!participant) {
-      res.status(404).json({ error: 'Participant record not found' });
+      participant = await prisma.participant.create({
+        data: {
+          meetingId: meeting.id,
+          userId: req.user.id,
+          status: 'accepted',
+          consentGiven: true,
+          consentTimestamp: new Date()
+        }
+      });
+      res.json({ participant });
       return;
     }
 
@@ -291,9 +429,28 @@ export const generateLiveKitToken = async (req: AuthRequest, res: Response): Pro
 
     const { roomCode } = req.params;
 
-    const meeting = await prisma.meeting.findUnique({ where: { roomCode } });
+    const meeting = await prisma.meeting.findFirst({
+      where: {
+        OR: [
+          { roomCode },
+          { id: roomCode }
+        ]
+      }
+    });
     if (!meeting) {
       res.status(404).json({ error: 'Meeting not found' });
+      return;
+    }
+
+    // Lifecycle enforcement: Reject terminated, cancelled, or expired meetings
+    if (meeting.status === 'ended' || meeting.status === 'cancelled' || meeting.status === 'expired' || isMeetingExpired(meeting)) {
+      if (isMeetingExpired(meeting) && meeting.status !== 'expired') {
+        await prisma.meeting.update({ where: { id: meeting.id }, data: { status: 'expired' } });
+      }
+      const reason = (meeting.status === 'expired' || isMeetingExpired(meeting)) ? 'expired' : meeting.status;
+      res.status(410).json({
+        error: `Cannot join meeting: This meeting has ${reason} and can no longer be launched or joined.`
+      });
       return;
     }
 
@@ -323,14 +480,23 @@ export const generateLiveKitToken = async (req: AuthRequest, res: Response): Pro
 
     at.addGrant({
       roomJoin: true,
-      room: roomCode,
+      room: meeting.roomCode,
       canPublish: true,
       canSubscribe: true,
+      canPublishData: true,
     });
 
     const token = await at.toJwt();
 
-    res.json({ token, wsUrl: process.env.LIVEKIT_WS_URL, consentGiven: isParticipant?.consentGiven || false });
+    res.json({
+      token,
+      wsUrl: process.env.LIVEKIT_WS_URL,
+      consentGiven: isParticipant ? isParticipant.consentGiven : false,
+      isHost,
+      hostId: meeting.hostId,
+      meetingId: meeting.id,
+      scheduledDurationMins: meeting.scheduledDurationMins,
+    });
   } catch (error: any) {
     console.error('[LiveKit] Token generation error:', error);
     res.status(500).json({ error: 'Failed to generate meeting token' });
@@ -342,60 +508,121 @@ export const endMeeting = async (req: AuthRequest, res: Response): Promise<void>
     if (!req.user) { res.status(401).json({ error: 'Not authenticated' }); return; }
     
     const { id } = req.params;
-    const meeting = await prisma.meeting.findUnique({ where: { id } });
 
-    if (!meeting) {
-      res.status(404).json({ error: 'Meeting not found' });
+    const transactionResult = await prisma.$transaction(async (tx) => {
+      const meeting = await tx.meeting.findFirst({
+        where: {
+          OR: [
+            { id },
+            { roomCode: id }
+          ]
+        }
+      });
+
+      if (!meeting) {
+        throw new Error('NOT_FOUND');
+      }
+
+      if (meeting.hostId !== req.user!.id) {
+        throw new Error('FORBIDDEN');
+      }
+
+      if (meeting.status === 'cancelled') {
+        throw new Error('CANCELLED');
+      }
+
+      if (meeting.status === 'expired') {
+        throw new Error('EXPIRED');
+      }
+
+      const meetingId = meeting.id;
+
+      if (meeting.status === 'ended') {
+        return { meeting, summary: await tx.meetingSummary.findUnique({ where: { meetingId } }), alreadyEnded: true };
+      }
+
+      const now = new Date();
+      let actualDurationSecs = 0;
+      if (meeting.actualStartTime) {
+        actualDurationSecs = Math.floor((now.getTime() - meeting.actualStartTime.getTime()) / 1000);
+      }
+
+      const updatedMeeting = await tx.meeting.update({
+        where: { id: meetingId },
+        data: {
+          status: 'ended',
+          actualEndTime: now,
+          endedAt: now,
+          actualDurationSecs,
+        }
+      });
+
+      const summary = await tx.meetingSummary.upsert({
+        where: { meetingId },
+        update: {},
+        create: {
+          meetingId,
+          status: 'PENDING',
+          decisions: [],
+          actionItems: []
+        }
+      });
+      return { meeting: updatedMeeting, summary, alreadyEnded: false };
+    });
+
+    if (transactionResult.alreadyEnded) {
+      res.json({
+        message: 'Meeting was already ended',
+        summaryId: transactionResult.summary?.id,
+        meetingId: transactionResult.meeting.id
+      });
       return;
     }
 
-    if (meeting.hostId !== req.user.id) {
-      res.status(403).json({ error: 'Only the host can end the meeting for all' });
-      return;
+    const canonicalMeetingId = transactionResult.meeting.id;
+    const roomCode = transactionResult.meeting.roomCode;
+
+    const endPayload = {
+      meetingId: canonicalMeetingId,
+      roomCode,
+      status: 'ended',
+      redirectAfter: 2000
+    };
+
+    io.to(`meeting:${canonicalMeetingId}`).emit('meeting-ended', endPayload);
+    io.to(`meeting:${canonicalMeetingId}`).emit('meeting-ended-by-host', endPayload);
+    if (roomCode) {
+      io.to(`meeting:${roomCode}`).emit('meeting-ended', endPayload);
+      io.to(`meeting:${roomCode}`).emit('meeting-ended-by-host', endPayload);
     }
 
-    const now = new Date();
-    let actualDurationSecs = 0;
-    if (meeting.actualStartTime) {
-      actualDurationSecs = Math.floor((now.getTime() - meeting.actualStartTime.getTime()) / 1000);
-    }
-
-    await prisma.meeting.update({
-      where: { id },
-      data: {
-        status: 'ended',
-        actualEndTime: now,
-        endedAt: now,
-        actualDurationSecs,
-      }
+    // Trigger AI summary asynchronously
+    const analysisApiUrl = process.env.VITE_ANALYSIS_URL ? process.env.VITE_ANALYSIS_URL.replace('ws://', 'http://') : 'http://localhost:8000';
+    fetch(`${analysisApiUrl}/api/ai/summarize/${canonicalMeetingId}`, { method: 'POST' }).then(res => {
+      console.log(`AI trigger response: ${res.status} ${res.statusText}`);
+    }).catch(err => {
+      console.error('Failed to trigger AI summary:', err);
     });
 
-    io.to(`meeting:${id}`).emit('meeting-ended');
-
-    // Telemetry and Summary generation offloaded to Analysis API via TimescaleDB/Redpanda.
-    // We will mock the summary generation for now.
-    const summaryText = 'AI Summary is processing on the backend...';
-    
-    const summary = await prisma.meetingSummary.create({
-      data: {
-        meetingId: id,
-        summaryText,
-        decisions: [],
-        actionItems: [],
-        followUpEmail: `Hi Team,\n\nThanks for a great meeting.\n\nBest,\n${req.user.name}`
-      }
+    // We no longer send the email immediately; the AI worker or a separate cron should do that when COMPLETED.
+    res.json({
+      message: 'Meeting ended successfully',
+      summaryId: transactionResult.summary?.id,
+      meetingId: canonicalMeetingId
     });
-
-    await sendEmail(
-      req.user.email,
-      `Nexus Post-Meeting Debrief: ${meeting.title || 'Meeting'}`,
-      summary.followUpEmail || ''
-    );
-
-    res.json({ message: 'Meeting ended successfully', summaryId: summary.id });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error ending meeting:', error);
-    res.status(500).json({ error: 'Server error' });
+    if (error.message === 'NOT_FOUND') {
+      res.status(404).json({ error: 'Meeting not found' });
+    } else if (error.message === 'FORBIDDEN') {
+      res.status(403).json({ error: 'Only the host can end the meeting for all' });
+    } else if (error.message === 'CANCELLED') {
+      res.status(400).json({ error: 'Cannot end a meeting that was cancelled' });
+    } else if (error.message === 'EXPIRED') {
+      res.status(400).json({ error: 'Cannot end a meeting that has expired' });
+    } else {
+      res.status(500).json({ error: 'Server error' });
+    }
   }
 };
 
@@ -404,11 +631,42 @@ export const getMeetingSummary = async (req: AuthRequest, res: Response): Promis
     if (!req.user) { res.status(401).json({ error: 'Not authenticated' }); return; }
     
     const { id } = req.params;
-    const meeting = await prisma.meeting.findUnique({ where: { id } });
-    const summary = await prisma.meetingSummary.findUnique({ where: { meetingId: id } });
+    const meeting = await prisma.meeting.findFirst({
+      where: {
+        OR: [
+          { id },
+          { roomCode: id }
+        ]
+      }
+    });
+
+    if (!meeting) {
+      res.status(404).json({ error: 'Meeting not found' });
+      return;
+    }
+
+    const summary = await prisma.meetingSummary.findUnique({ where: { meetingId: meeting.id } });
     
-    // Telemetry and Transcripts are offloaded to Analysis API via TimescaleDB
-    const transcript: any[] = [];
+    // Fetch persisted transcripts from the Transcription table
+    const transcriptRecords = await prisma.transcription.findMany({
+      where: { meetingId: meeting.id },
+      orderBy: { startTimeMs: 'asc' }
+    });
+
+    const transcript = transcriptRecords.map((t) => {
+      const start = Number(t.startTimeMs);
+      const mins = Math.floor(start / 60000);
+      const secs = Math.floor((start % 60000) / 1000);
+      return {
+        id: t.id,
+        userName: t.participantId,
+        text: t.text,
+        startTimeMs: Number(t.startTimeMs),
+        endTimeMs: Number(t.endTimeMs),
+        formattedTime: `${mins}:${secs < 10 ? '0' : ''}${secs}`
+      };
+    });
+
     const speakingPercentages: any[] = [];
 
     res.json({

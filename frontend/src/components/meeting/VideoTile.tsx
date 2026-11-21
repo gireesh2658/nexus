@@ -19,7 +19,7 @@ const VideoTile: React.FC<VideoTileProps> = ({ stream, name, userId, isLocal, is
   const videoRef = useRef<HTMLVideoElement>(null);
   const [activeReactions, setActiveReactions] = React.useState<{ id: number; emoji: string }[]>([]);
   const token = localStorage.getItem('token') || '';
-  const meetingId = useMeetingStore((state) => state.currentMeeting?._id);
+  const meetingId = useMeetingStore((state) => state.currentMeeting?.id);
   
   // Only run AI if this is the local tile
   const consentGiven = useMeetingStore((state) => state.consentGiven);
@@ -33,7 +33,7 @@ const VideoTile: React.FC<VideoTileProps> = ({ stream, name, userId, isLocal, is
   });
 
   useEffect(() => {
-    if (videoRef.current && stream) {
+    if (videoRef.current && stream && videoRef.current.srcObject !== stream) {
       videoRef.current.srcObject = stream;
     }
   }, [stream]);

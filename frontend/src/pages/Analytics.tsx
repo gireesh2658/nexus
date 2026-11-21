@@ -1,19 +1,65 @@
+import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { BarChart2, TrendingUp, Users, Clock, Activity } from 'lucide-react';
+import { BarChart2, TrendingUp, Users, Calendar, Activity, RefreshCw } from 'lucide-react';
+import { meetingService } from '../services/meetingService';
+import toast from 'react-hot-toast';
 
 const Analytics = () => {
+  const [metrics, setMetrics] = useState({
+    total: 0,
+    upcoming: 0,
+    active: 0,
+    history: 0,
+  });
+  const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const fetchMetrics = async (isManual = false) => {
+    if (isManual) setIsRefreshing(true);
+    try {
+      const data = await meetingService.getMyMeetings('all');
+      const total = (data.total?.hosted || 0) + (data.total?.invited || 0);
+      setMetrics({
+        total,
+        upcoming: data.total?.upcoming || 0,
+        active: data.total?.active || 0,
+        history: data.total?.history || 0,
+      });
+      if (isManual) toast.success('Analytics refreshed');
+    } catch {
+      toast.error('Failed to load analytics metrics');
+    } finally {
+      setLoading(false);
+      if (isManual) setIsRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchMetrics();
+  }, []);
+
   const stats = [
-    { label: 'Total Meetings', value: '--', icon: <BarChart2 className="w-5 h-5" />, color: 'text-nexus-primary' },
-    { label: 'Avg. Duration', value: '--', icon: <Clock className="w-5 h-5" />, color: 'text-nexus-accent' },
-    { label: 'Participants', value: '--', icon: <Users className="w-5 h-5" />, color: 'text-nexus-success' },
-    { label: 'Engagement', value: '--', icon: <TrendingUp className="w-5 h-5" />, color: 'text-nexus-warning' },
+    { label: 'Total Meetings', value: loading ? '--' : metrics.total.toString(), icon: <BarChart2 className="w-5 h-5" />, color: 'text-nexus-primary' },
+    { label: 'Upcoming Scheduled', value: loading ? '--' : metrics.upcoming.toString(), icon: <Calendar className="w-5 h-5" />, color: 'text-nexus-cyan' },
+    { label: 'Active Live', value: loading ? '--' : metrics.active.toString(), icon: <Activity className="w-5 h-5" />, color: 'text-nexus-success' },
+    { label: 'Completed Debriefs', value: loading ? '--' : metrics.history.toString(), icon: <TrendingUp className="w-5 h-5" />, color: 'text-nexus-warning' },
   ];
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="w-full">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold tracking-tight">Analytics</h1>
-        <p className="text-nexus-muted mt-1">AI-powered insights from your meetings.</p>
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Analytics & Intelligence</h1>
+          <p className="text-nexus-muted mt-1">Real-time metrics and AI debrief insights across all meetings.</p>
+        </div>
+        <button
+          onClick={() => fetchMetrics(true)}
+          disabled={isRefreshing}
+          className="flex items-center gap-2 px-3 py-1.5 text-xs text-nexus-muted hover:text-white bg-white/5 hover:bg-white/10 rounded-lg border border-white/5 transition-all"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+          Refresh
+        </button>
       </div>
 
       {/* Stats Grid */}
@@ -42,18 +88,18 @@ const Analytics = () => {
           <h3 className="text-lg font-bold flex items-center gap-2 mb-4">
             <Activity className="w-5 h-5 text-nexus-primary" /> Focus Score Trends
           </h3>
-          <div className="h-48 flex items-center justify-center border border-dashed border-white/10 rounded-xl">
-            <p className="text-nexus-muted text-sm">Focus analytics will appear after meetings with AI analysis enabled.</p>
+          <div className="h-48 flex items-center justify-center border border-dashed border-white/10 rounded-xl p-6 text-center">
+            <p className="text-nexus-muted text-sm">Real-time focus and gaze metrics stream live into TimescaleDB and populate during active AI meetings.</p>
           </div>
         </div>
 
         {/* Meeting Activity */}
         <div className="glass-panel p-6 rounded-2xl border border-white/5">
           <h3 className="text-lg font-bold flex items-center gap-2 mb-4">
-            <BarChart2 className="w-5 h-5 text-nexus-accent" /> Meeting Activity
+            <Users className="w-5 h-5 text-nexus-cyan" /> Participation & AI Debriefs
           </h3>
-          <div className="h-48 flex items-center justify-center border border-dashed border-white/10 rounded-xl">
-            <p className="text-nexus-muted text-sm">Meeting frequency and duration charts will populate with data.</p>
+          <div className="h-48 flex items-center justify-center border border-dashed border-white/10 rounded-xl p-6 text-center">
+            <p className="text-nexus-muted text-sm">Transcripts, Gemini action items, and speaking percentages are archived under meeting debriefs.</p>
           </div>
         </div>
       </div>

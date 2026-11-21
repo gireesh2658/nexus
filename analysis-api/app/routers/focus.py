@@ -1,7 +1,7 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
 from app.utils.auth import verify_token as auth_token
 from app.models.schemas import BehavioralSignal
-from app.ml.score_fuser import fuse_scores
+
 from datetime import datetime
 import json
 import jwt
@@ -61,12 +61,9 @@ async def behavioral_ws(websocket: WebSocket):
             behavioral_score = compute_behavioral_score(signal)
             elapsed_secs = (datetime.utcnow() - meeting_start_times[key]).total_seconds()
 
-            result = await fuse_scores(
-                participant_id=signal.participant_id,
-                meeting_id=signal.meeting_id,
-                behavioral_score=behavioral_score,
-                elapsed_secs=elapsed_secs,
-            )
+            # Just return the local behavioral score as final for now
+            # since fuse_scores is deleted.
+            result = type("Result", (object,), {"final_score": behavioral_score})
 
             if result:
                 await websocket.send_text(json.dumps({
@@ -137,13 +134,7 @@ async def frame_ws(websocket: WebSocket):
                 blink_score = 50 if ear < 0.15 else 100
                 visual_score = (pose_score * 0.6) + (blink_score * 0.4)
                 
-                from app.ml.score_fuser import redis_cache
-                if redis_cache:
-                    redis_cache.setex(
-                        f"visual_score:{meeting_id}:{participant_id}",
-                        10,
-                        json.dumps({"score": visual_score / 100.0})
-                    )
+                # visual_score caching removed since score_fuser is gone
 
             await websocket.send_text(json.dumps({
                 "status": "processed",

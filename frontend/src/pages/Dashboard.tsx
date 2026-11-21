@@ -1,13 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Plus, Video, Calendar, Clock, Users, Keyboard } from 'lucide-react';
+import { Plus, Video, Calendar, Clock, Users, Keyboard, RefreshCw } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 import { meetingService } from '../services/meetingService';
 import type { Meeting } from '../types';
 import toast from 'react-hot-toast';
 import { Button } from '../components/ui/Button';
 import { CreateMeetingModal } from '../components/meeting/CreateMeetingModal';
+import { JoinCodeModal } from '../components/meeting/JoinCodeModal';
 
 const getGreeting = () => {
   const hour = new Date().getHours();
@@ -19,46 +20,74 @@ const getGreeting = () => {
 const Dashboard = () => {
   const { user } = useAuthStore();
   const navigate = useNavigate();
-  const [hostedMeetings, setHostedMeetings] = useState<Meeting[]>([]);
-  const [invitedMeetings, setInvitedMeetings] = useState<Meeting[]>([]);
+  const [upcomingMeetings, setUpcomingMeetings] = useState<Meeting[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isJoinCodeModalOpen, setIsJoinCodeModalOpen] = useState(false);
 
-  const fetchMeetings = async () => {
+  const fetchMeetings = useCallback(async (isManualRefresh = false) => {
+    if (isManualRefresh) setIsRefreshing(true);
     try {
-      const data = await meetingService.getMyMeetings();
-      setHostedMeetings(data.hosted);
-      setInvitedMeetings(data.invited);
+      const data = await meetingService.getMyMeetings('upcoming');
+      const isTerminal = (m: Meeting) => m.status === 'ended' || m.status === 'expired' || m.status === 'cancelled';
+      const upcomingList = (data.upcoming || [...(data.hosted || []), ...(data.invited || [])])
+        .filter(m => !isTerminal(m))
+        .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime());
+
+      setUpcomingMeetings(upcomingList);
+      if (isManualRefresh) toast.success('Schedule refreshed');
     } catch (err: unknown) {
       console.error(err);
       toast.error('Failed to load meetings');
     } finally {
       setIsLoading(false);
+      if (isManualRefresh) setIsRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchMeetings();
+    // Bounded periodic refresh every 60 seconds to keep upcoming list fresh
+    const interval = setInterval(() => fetchMeetings(), 60000);
+    return () => clearInterval(interval);
+  }, [fetchMeetings]);
+
+  const handleCreateMeeting = async (data: {
+    title: string;
+    participantUsernames: string[];
+    scheduledAt: string;
+    scheduledDurationMins: number;
+    description?: string;
+  }) => {
+    const res = await meetingService.createMeeting(data);
+    toast.success('Meeting created successfully');
+    await fetchMeetings();
+
+    // If instant meeting (scheduled within 60s of current time), route directly to lobby
+    const isInstant = Math.abs(new Date(data.scheduledAt).getTime() - Date.now()) < 60000;
+    if (isInstant && res.meeting?.roomCode) {
+      navigate(`/lobby/${res.meeting.roomCode}`);
     }
   };
 
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    fetchMeetings();
-  }, []);
-
-  const handleCreateMeeting = async (title: string, usernames: string[]) => {
-    const data = {
-      title,
-      participantUsernames: usernames,
-      scheduledAt: new Date().toISOString(),
-      scheduledDurationMins: 60,
-    };
-    await meetingService.createMeeting(data);
-    toast.success('Meeting created successfully');
-    fetchMeetings();
+  const handleJoin = (meeting: Meeting) => {
+    if (meeting.status === 'ended') {
+      navigate(`/meeting/${meeting.id}/summary`);
+      return;
+    }
+    if (meeting.status === 'expired') {
+      toast.error('This meeting has expired and cannot be launched.');
+      fetchMeetings();
+      return;
+    }
+    if (meeting.status === 'cancelled') {
+      toast.error('This meeting has been cancelled.');
+      fetchMeetings();
+      return;
+    }
+    navigate(`/lobby/${meeting.roomCode}`);
   };
-
-  const handleJoin = (roomId: string) => {
-    navigate(`/lobby/${roomId}`);
-  };
-
-  const allMeetings = [...hostedMeetings, ...invitedMeetings].sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime());
 
   const containerVariants = {
     hidden: { opacity: 0 },
@@ -83,11 +112,22 @@ const Dashboard = () => {
       animate="show"
     >
       {/* Header — Calm greeting */}
-      <motion.div variants={itemVariants} className="mb-10">
-        <h1 className="text-2xl font-semibold font-display tracking-tight mb-1">
-          {getGreeting()}, {user?.name}
-        </h1>
-        <p className="text-nexus-muted text-body">{today}</p>
+      <motion.div variants={itemVariants} className="mb-10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold font-display tracking-tight mb-1">
+            {getGreeting()}, {user?.name}
+          </h1>
+          <p className="text-nexus-muted text-body">{today}</p>
+        </div>
+        <button
+          onClick={() => fetchMeetings(true)}
+          disabled={isRefreshing}
+          className="self-start sm:self-center flex items-center gap-2 px-3 py-1.5 text-xs text-nexus-muted hover:text-white bg-white/5 hover:bg-white/10 rounded-lg border border-white/5 transition-all"
+          title="Refresh schedule"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+          Refresh
+        </button>
       </motion.div>
 
       {/* Action Row */}
@@ -100,7 +140,7 @@ const Dashboard = () => {
         </Button>
         <Button 
           variant="secondary"
-          onClick={() => {}}
+          onClick={() => setIsJoinCodeModalOpen(true)}
         >
           <Keyboard className="w-4 h-4" />
           Join with code
@@ -117,14 +157,14 @@ const Dashboard = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
             {[1, 2, 3].map(i => <div key={i} className="h-36 bg-nexus-surface rounded-card animate-pulse" />)}
           </div>
-        ) : allMeetings.length > 0 ? (
+        ) : upcomingMeetings.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-            {allMeetings.map((meeting, idx) => (
-              <MeetingCard 
-                key={meeting._id} 
-                meeting={meeting} 
-                onJoin={() => handleJoin(meeting.roomCode)} 
-                isHost={(meeting.hostId as unknown as { _id: string })?._id === user?._id || (meeting.hostId as unknown as string) === user?._id}
+            {upcomingMeetings.map((meeting, idx) => (
+              <MeetingCard
+                key={meeting.id}
+                meeting={meeting}
+                onJoin={() => handleJoin(meeting)}
+                isHost={meeting.hostId === user?.id}
                 delay={idx * 0.05}
               />
             ))}
@@ -147,14 +187,18 @@ const Dashboard = () => {
         onClose={() => setIsModalOpen(false)}
         onSubmit={handleCreateMeeting}
       />
+
+      <JoinCodeModal
+        isOpen={isJoinCodeModalOpen}
+        onClose={() => setIsJoinCodeModalOpen(false)}
+      />
     </motion.div>
   );
 };
 
-const MeetingCard = ({ meeting, onJoin, isHost, delay }: { meeting: Meeting, onJoin: () => void, isHost: boolean, delay: number }) => {
+const MeetingCard = ({ meeting, onJoin, isHost, delay }: { meeting: Meeting; onJoin: () => void; isHost: boolean; delay: number }) => {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setNow(Date.now());
     const interval = setInterval(() => setNow(Date.now()), 60000);
     return () => clearInterval(interval);
@@ -190,10 +234,10 @@ const MeetingCard = ({ meeting, onJoin, isHost, delay }: { meeting: Meeting, onJ
       {/* Meta */}
       <div className="flex items-center gap-3 text-xs text-nexus-muted">
         <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {meeting.scheduledDurationMins}m</span>
-        <span className="flex items-center gap-1"><Users className="w-3 h-3" /> {isHost ? meeting.participantUsernames.length : 'Invited'}</span>
+        <span className="flex items-center gap-1"><Users className="w-3 h-3" /> {isHost ? (meeting.participantUsernames?.length || 0) : 'Invited'}</span>
       </div>
 
-      {/* Stacked Avatars placeholder */}
+      {/* Stacked Avatars */}
       <div className="flex -space-x-2 mt-3">
         {(meeting.participantUsernames || []).slice(0, 3).map((_, i) => (
           <div key={i} className="w-7 h-7 rounded-full bg-nexus-bg border-2 border-nexus-surface flex items-center justify-center text-[10px] font-medium text-nexus-muted">
@@ -202,7 +246,7 @@ const MeetingCard = ({ meeting, onJoin, isHost, delay }: { meeting: Meeting, onJ
         ))}
         {(meeting.participantUsernames?.length || 0) > 3 && (
           <div className="w-7 h-7 rounded-full bg-nexus-bg border-2 border-nexus-surface flex items-center justify-center text-[10px] font-medium text-nexus-muted">
-            +{meeting.participantUsernames.length - 3}
+            +{(meeting.participantUsernames?.length || 0) - 3}
           </div>
         )}
       </div>

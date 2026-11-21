@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { jwtConfig } from '../config/jwtConfig';
 import { prisma } from '../config/db';
-import { redis1 } from '../config/redis';
+import { redis1, isRedisAvailable } from '../config/redis';
 
 export interface AuthRequest extends Request {
   user?: any;
@@ -25,11 +25,15 @@ export const authMiddleware = async (req: AuthRequest, res: Response, next: Next
       algorithms: [jwtConfig.algorithm],
     }) as { userId: string; jti?: string };
 
-    if (decoded.jti) {
-      const blacklisted = await redis1.get(`bl_${decoded.jti}`);
-      if (blacklisted) {
-        res.status(401).json({ error: 'Token has been revoked.' });
-        return;
+    if (decoded.jti && redis1 && isRedisAvailable()) {
+      try {
+        const blacklisted = await redis1.get(`bl_${decoded.jti}`);
+        if (blacklisted) {
+          res.status(401).json({ error: 'Token has been revoked.' });
+          return;
+        }
+      } catch (err) {
+        console.warn('[Auth] Redis error checking token revocation:', err);
       }
     }
 

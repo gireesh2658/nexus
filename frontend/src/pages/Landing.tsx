@@ -55,7 +55,10 @@ const Landing = () => {
               Start for Free
               <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
             </Link>
-            <button className="px-8 py-4 rounded-full font-semibold text-lg glass-panel hover:bg-white/5 transition-all">
+            <button
+              onClick={() => document.getElementById('features')?.scrollIntoView({ behavior: 'smooth' })}
+              className="px-8 py-4 rounded-full font-semibold text-lg glass-panel hover:bg-white/5 transition-all cursor-pointer"
+            >
               View Architecture
             </button>
           </div>
@@ -63,6 +66,7 @@ const Landing = () => {
 
         {/* Features Grid */}
         <motion.div 
+          id="features"
           initial={{ opacity: 0, y: 40 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8, delay: 0.2, ease: "easeOut" }}

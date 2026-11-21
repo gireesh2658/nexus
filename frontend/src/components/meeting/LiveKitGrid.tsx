@@ -39,15 +39,24 @@ const LiveKitGrid: React.FC = () => {
     ? cameraTracks.find(t => t.participant.identity === spotlightedUserId)
     : null;
 
+  const streamMapRef = React.useRef<Map<string, MediaStream>>(new Map());
+
+  const getMediaStream = (track?: MediaStreamTrack): MediaStream | null => {
+    if (!track) return null;
+    let stream = streamMapRef.current.get(track.id);
+    if (!stream || stream.getTracks()[0] !== track) {
+      stream = new MediaStream([track]);
+      streamMapRef.current.set(track.id, stream);
+    }
+    return stream;
+  };
+
   const renderTrack = (trackRef: TrackReferenceOrPlaceholder, isDominant: boolean = false) => {
     const isLocal = trackRef.participant.identity === localParticipant.identity;
     const name = trackRef.participant.name || trackRef.participant.identity;
     const isSpotlighted = trackRef.participant.identity === spotlightedUserId;
     
-    let stream: MediaStream | null = null;
-    if (trackRef.publication?.track?.mediaStreamTrack) {
-      stream = new MediaStream([trackRef.publication.track.mediaStreamTrack]);
-    }
+    const stream = getMediaStream(trackRef.publication?.track?.mediaStreamTrack);
     
     return (
       <div key={`${trackRef.participant.identity}-${trackRef.source}`} className={`${isDominant ? 'w-full h-full' : 'w-full h-full'}`}>

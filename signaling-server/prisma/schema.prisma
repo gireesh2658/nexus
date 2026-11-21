@@ -78,10 +78,17 @@ model MeetingSummary {
   id               String             @id @default(uuid())
   meetingId        String             @unique
   meeting          Meeting            @relation(fields: [meetingId], references: [id])
-  summaryText      String
+  status           String             @default("PENDING")
+  summaryText      String?
   decisions        String[]
   actionItems      Json[]
   followUpEmail    String?
+  retryCount       Int                @default(0)
+  lastError        String?
+  modelUsed        String?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  failedAt         DateTime?
   createdAt        DateTime           @default(now())
 }
 
@@ -91,8 +98,8 @@ model Transcription {
   meetingId     String
   participantId String
   text          String
-  startTimeMs   Int
-  endTimeMs     Int
+  startTimeMs   BigInt
+  endTimeMs     BigInt
   createdAt     DateTime @default(now())
 
   meeting       Meeting  @relation(fields: [meetingId], references: [id])

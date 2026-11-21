@@ -1,10 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Pen, Eraser, Trash2 } from 'lucide-react';
 import { socketService } from '../../services/socket';
+import { useMeetingStore } from '../../store/meetingStore';
 import { useParams } from 'react-router-dom';
 
 const WhiteboardPanel: React.FC = () => {
   const { id: meetingId } = useParams<{ id: string }>();
+  const currentMeeting = useMeetingStore(state => state.currentMeeting);
+  const effectiveMeetingId = currentMeeting?.id || currentMeeting?.roomCode || meetingId;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [color, setColor] = useState('#7C3AED');
@@ -97,7 +100,7 @@ const WhiteboardPanel: React.FC = () => {
 
     const socket = socketService.getSocket();
     socket?.emit('draw-line', {
-      meetingId,
+      meetingId: effectiveMeetingId,
       x0: x0 / w,
       y0: y0 / h,
       x1: x1 / w,
@@ -147,7 +150,7 @@ const WhiteboardPanel: React.FC = () => {
       const ctx = canvas.getContext('2d');
       ctx?.clearRect(0, 0, canvas.width, canvas.height);
       const socket = socketService.getSocket();
-      socket?.emit('draw-clear', { meetingId });
+      socket?.emit('draw-clear', { meetingId: effectiveMeetingId });
     }
   };
 
@@ -189,7 +192,7 @@ const WhiteboardPanel: React.FC = () => {
             className="w-20 accent-nexus-primary"
           />
           <div className="w-px h-5 bg-white/10" />
-          <button onClick={handleClearBoard} className="p-1.5 text-nexus-danger hover:bg-nexus-danger/20 rounded-md transition-colors">
+          <button onClick={handleClearBoard} title="Clear Board" data-testid="clear-whiteboard-btn" className="p-1.5 text-nexus-danger hover:bg-nexus-danger/20 rounded-md transition-colors">
             <Trash2 className="w-4 h-4" />
           </button>
         </div>

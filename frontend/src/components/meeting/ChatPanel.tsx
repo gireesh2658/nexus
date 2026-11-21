@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Send, Paperclip, Smile, MessageSquare } from 'lucide-react';
 import { socketService } from '../../services/socket';
 import { useAuthStore } from '../../store/authStore';
+import { useMeetingStore } from '../../store/meetingStore';
 import { useParams } from 'react-router-dom';
 
 interface ChatMessage {
@@ -15,6 +16,8 @@ interface ChatMessage {
 const ChatPanel: React.FC = () => {
   const { id: meetingId } = useParams<{ id: string }>();
   const user = useAuthStore(state => state.user);
+  const currentMeeting = useMeetingStore(state => state.currentMeeting);
+  const effectiveMeetingId = currentMeeting?.id || currentMeeting?.roomCode || meetingId;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -24,7 +27,11 @@ const ChatPanel: React.FC = () => {
     if (!socket) return;
 
     const handleNewMessage = (msg: ChatMessage) => {
-      setMessages(prev => [...prev, msg]);
+      setMessages(prev => {
+        if (msg.senderId === user?.id) return prev;
+        if (prev.some(m => m.id === msg.id)) return prev;
+        return [...prev, msg];
+      });
     };
 
     socket.on('chat-message', handleNewMessage);
@@ -32,7 +39,7 @@ const ChatPanel: React.FC = () => {
     return () => {
       socket.off('chat-message', handleNewMessage);
     };
-  }, []);
+  }, [user?.id]);
 
   useEffect(() => {
     // Auto-scroll to bottom
@@ -41,14 +48,16 @@ const ChatPanel: React.FC = () => {
 
   const handleSend = (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!inputText.trim() || !user || !meetingId) return;
+    if (!inputText.trim() || !user || !effectiveMeetingId) return;
 
     const socket = socketService.getSocket();
     if (socket) {
+      const msgId = Date.now().toString() + Math.random().toString(36).substring(2, 7);
       const newMsg = {
-        meetingId,
+        id: msgId,
+        meetingId: effectiveMeetingId,
         text: inputText.trim(),
-        senderId: user._id,
+        senderId: user.id,
         senderName: user.name,
       };
       
@@ -56,8 +65,8 @@ const ChatPanel: React.FC = () => {
       
       // Optimistically add to local state
       setMessages(prev => [...prev, {
-        id: Date.now().toString(),
-        senderId: user._id,
+        id: msgId,
+        senderId: user.id,
         senderName: user.name,
         text: inputText.trim(),
         timestamp: new Date().toISOString()
@@ -84,7 +93,7 @@ const ChatPanel: React.FC = () => {
           </div>
         ) : (
           messages.map((msg, idx) => {
-            const isMe = msg.senderId === user?._id;
+            const isMe = msg.senderId === user?.id;
             return (
               <div key={msg.id || idx} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
                 <span className="text-[10px] text-nexus-muted mb-1 px-1 font-medium">{isMe ? 'You' : msg.senderName}</span>

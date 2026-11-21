@@ -5,9 +5,9 @@ All TimescaleDB queries go through asyncpg (via timescale_writer.get_pool).
 from fastapi import APIRouter, Request, Depends
 from app.utils.auth import verify_token as auth_token
 from fastapi.responses import StreamingResponse
-from app.utils.timescale_writer import get_pool
-from app.models.db import get_mongo_db
 import json
+from app.utils.timescale_writer import get_pool
+
 import asyncio
 from datetime import datetime
 
@@ -24,6 +24,13 @@ async def get_meeting_analytics(meeting_id: str):
 
     try:
         async with pool.acquire() as conn:
+            m_row = await conn.fetchrow(
+                'SELECT "id"::text, "roomCode" FROM "Meeting" WHERE "id"::text = $1 OR "roomCode" = $1',
+                meeting_id
+            )
+            cid = m_row['id'] if m_row else meeting_id
+            rcode = m_row['roomCode'] if m_row else meeting_id
+
             # Overall engagement timeline (30-second buckets)
             timeline_rows = await conn.fetch("""
                 SELECT
@@ -33,10 +40,10 @@ async def get_meeting_analytics(meeting_id: str):
                     MAX(final_score)  AS max_score,
                     COUNT(*)          AS sample_count
                 FROM focus_events
-                WHERE meeting_id = $1
+                WHERE meeting_id = $1 OR meeting_id = $2
                 GROUP BY bucket
                 ORDER BY bucket;
-            """, meeting_id)
+            """, cid, rcode)
             timeline = [dict(r) for r in timeline_rows]
 
             # Per-participant averages
@@ -49,9 +56,9 @@ async def get_meeting_analytics(meeting_id: str):
                     AVG(audio_score)       AS avg_audio,
                     COUNT(*)              AS total_events
                 FROM focus_events
-                WHERE meeting_id = $1
+                WHERE meeting_id = $1 OR meeting_id = $2
                 GROUP BY participant_id;
-            """, meeting_id)
+            """, cid, rcode)
             participants = [dict(r) for r in part_rows]
 
             # Lowest-engagement segments
@@ -60,30 +67,18 @@ async def get_meeting_analytics(meeting_id: str):
                     time_bucket('2 minutes', recorded_at) AS segment,
                     AVG(final_score) AS avg_score
                 FROM focus_events
-                WHERE meeting_id = $1
+                WHERE meeting_id = $1 OR meeting_id = $2
                 GROUP BY segment
                 ORDER BY avg_score ASC
                 LIMIT 5;
-            """, meeting_id)
+            """, cid, rcode)
             low_segments = [dict(r) for r in low_rows]
-
-        # Moderation logs from MongoDB
-        mongo_db = get_mongo_db()
-        moderation_logs: list[dict] = []
-        if mongo_db:
-            cursor = mongo_db.moderationlogs.find(
-                {"meetingId": meeting_id}
-            ).sort("createdAt", -1)
-            async for log in cursor:
-                log["_id"] = str(log["_id"])
-                moderation_logs.append(log)
 
         return {
             "meeting_id": meeting_id,
             "timeline": timeline,
             "participants": participants,
             "low_engagement_segments": low_segments,
-            "moderation_logs": moderation_logs,
         }
     except Exception as e:
         return {"error": str(e)}

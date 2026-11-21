@@ -27,6 +27,11 @@ export default defineConfig({
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
+      '/api/telemetry': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+        ws: true,
+      },
       '/api': {
         target: 'http://127.0.0.1:4000',
         changeOrigin: true,

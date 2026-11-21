@@ -5,6 +5,17 @@ __pycache__/
 .venv/
 venv/
 venv*/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local Runtime & Scratch State
+.nexus_local_pids.json
+scratch/
+test-results/
+playwright-report/
+coverage/
+.vite/
 
 # Environment
 .env
@@ -37,6 +48,11 @@ analysis-api/models/*.safetensors
 # Logs
 *.log
 logs/
+
+# Backups
+backups/
+*.dump
+*.sql.gz
 
 # Frontend specific
 npm-debug.log*

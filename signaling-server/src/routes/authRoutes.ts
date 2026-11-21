@@ -13,6 +13,7 @@ router.post('/logout', authMiddleware, logout);
 // Protected routes
 router.get('/me', authMiddleware, getMe);
 router.put('/profile', authMiddleware, updateProfile);
+router.patch('/profile', authMiddleware, updateProfile);
 router.get('/search', authMiddleware, searchUsers);
 
 export default router;

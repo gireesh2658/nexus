@@ -1,0 +1,171 @@
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+      - "443:443"
+    networks:
+      - nexus-frontend
+      - nexus-internal
+    restart: unless-stopped
+    depends_on:
+      signaling-server:
+        condition: service_healthy
+      analysis-api:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  signaling-server:
+    build:
+      context: ./signaling-server
+      dockerfile: Dockerfile
+    networks:
+      - nexus-internal
+    environment:
+      - NODE_ENV=production
+      - PORT=4000
+      - APP_DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@nexus-timescale:5432/${POSTGRES_DB}?schema=public
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@nexus-timescale:5432/${POSTGRES_DB}?schema=public
+      - "JWT_SECRET=${JWT_SECRET:?FATAL: JWT_SECRET must be configured in production}"
+      - REDIS_URL=redis://redis:6379/0
+      - SIGNAL_REDIS_DB=2
+      - "ALLOWED_ORIGIN=${ALLOWED_ORIGIN:?FATAL: ALLOWED_ORIGIN must be configured in production}"
+      - "LIVEKIT_API_KEY=${LIVEKIT_API_KEY:?FATAL: LIVEKIT_API_KEY must be configured in production}"
+      - "LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:?FATAL: LIVEKIT_API_SECRET must be configured in production}"
+      - "LIVEKIT_WS_URL=${LIVEKIT_WS_URL:?FATAL: LIVEKIT_WS_URL must be configured in production}"
+      - VITE_ANALYSIS_URL=http://analysis-api:8000
+    depends_on:
+      nexus-timescale:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:4000/api/health/live', (r) => process.exit(r.statusCode === 200 ? 0 : 1))\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  analysis-api:
+    build:
+      context: ./analysis-api
+      dockerfile: Dockerfile
+    networks:
+      - nexus-internal
+    environment:
+      - APP_DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@nexus-timescale:5432/${POSTGRES_DB}?schema=public
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@nexus-timescale:5432/${POSTGRES_DB}?schema=public
+      - TELEMETRY_DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@nexus-timescale:5432/${POSTGRES_DB}
+      - REDIS_URL=redis://redis:6379/0
+      - "ALLOWED_ORIGIN=${ALLOWED_ORIGIN:?FATAL: ALLOWED_ORIGIN must be configured in production}"
+      - "JWT_SECRET=${JWT_SECRET:?FATAL: JWT_SECRET must be configured in production}"
+      - "LIVEKIT_API_KEY=${LIVEKIT_API_KEY:?FATAL: LIVEKIT_API_KEY must be configured in production}"
+      - "LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:?FATAL: LIVEKIT_API_SECRET must be configured in production}"
+      - "GEMINI_API_KEY=${GEMINI_API_KEY:?FATAL: GEMINI_API_KEY must be configured in production}"
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.8-flash}
+    depends_on:
+      nexus-timescale:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - "./analysis-api/models:/app/models"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2048M
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; exit(0 if urllib.request.urlopen('http://localhost:8000/api/health/live').getcode() == 200 else 1)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  nexus-timescale:
+    image: timescale/timescaledb:latest-pg15
+    container_name: nexus-timescale-prod
+    networks:
+      - nexus-internal
+    # NOTE: PostgreSQL port 5432 is deliberately NOT published to the host/internet
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - "POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?FATAL: POSTGRES_PASSWORD must be configured in production}"
+      - POSTGRES_DB=${POSTGRES_DB:-nexus}
+    volumes:
+      - pgdata_prod_telemetry:/var/lib/postgresql/data
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 1024M
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-nexus}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: nexus-redis-prod
+    networks:
+      - nexus-internal
+    # NOTE: Redis port 6379 is deliberately NOT published to the host/internet
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  livekit:
+    image: livekit/livekit-server:latest
+    command: --config /livekit.yaml
+    networks:
+      - nexus-frontend
+      - nexus-internal
+    ports:
+      - "7880:7880"                 # WebRTC WebSocket Signaling
+      - "7881:7881"                 # TCP ICE fallback
+      - "50000-50050:50000-50050/udp" # WebRTC UDP media transport
+    volumes:
+      - ./livekit.prod.yaml:/livekit.yaml:ro
+    environment:
+      - "LIVEKIT_KEYS=${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1024M
+
+networks:
+  nexus-frontend:
+    driver: bridge
+  nexus-internal:
+    driver: bridge
+
+volumes:
+  pgdata_prod_telemetry:

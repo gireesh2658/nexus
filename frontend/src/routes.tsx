@@ -96,13 +96,21 @@ const AppRoutes = () => {
           } 
         />
         
-        <Route 
-          path="/meeting/:id/summary" 
+        <Route
+          path="/meeting/:id/summary"
           element={
             <ProtectedRoute>
               <MeetingSummary />
             </ProtectedRoute>
-          } 
+          }
+        />
+        <Route
+          path="/meetings/:id/summary"
+          element={
+            <ProtectedRoute>
+              <MeetingSummary />
+            </ProtectedRoute>
+          }
         />
 
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

@@ -26,7 +26,7 @@ class SocketService {
       // Intentionally left blank
     });
 
-    this.socket.on('auth-error', (data) => {
+    this.socket.on('auth-error', (data: { error: string }) => {
       console.error('[SocketService] Auth error:', data.error);
     });
 

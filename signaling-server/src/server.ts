@@ -6,16 +6,16 @@ import cors from 'cors';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 
-import connectDB from './config/db';
+import connectDB, { prisma } from './config/db';
+import { isRedisAvailable } from './config/redis';
 import authRoutes from './routes/authRoutes';
 import meetingRoutes from './routes/meetingRoutes';
 import { errorMiddleware } from './middleware/errorMiddleware';
 import { setupMeetingHandler } from './sockets/meetingHandler';
-import { initRedisSubscriber } from './sockets/redisSubscriber';
+
 import { apiLimiter, authLimiter } from './middleware/rateLimiter';
 import { initMailer } from './services/mailer';
-
-import path from 'path';
+import { startLifecycleWorker } from './services/meetingLifecycle';
 
 const app = express();
 const server = http.createServer(app);
@@ -65,7 +65,7 @@ app.use(helmet({
 app.use(cors({
   origin: ALLOWED_ORIGINS,
   credentials: true,
-  methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
@@ -96,9 +96,36 @@ app.use((req, res, next) => {
 // Rate Limiting
 app.use('/api/', apiLimiter);
 
-// Health check
+// Health check (Liveness & Readiness)
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', service: 'nexus-signaling-server', timestamp: new Date().toISOString() });
+});
+
+app.get('/api/health/live', (_req, res) => {
+  res.json({ status: 'ok', service: 'nexus-signaling-server', timestamp: new Date().toISOString() });
+});
+
+app.get('/api/health/ready', async (_req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    const redisStatus = isRedisAvailable() ? 'connected' : 'degraded';
+    res.json({
+      status: 'ready',
+      service: 'nexus-signaling-server',
+      timestamp: new Date().toISOString(),
+      dependencies: {
+        database: 'connected',
+        redis: redisStatus,
+      },
+    });
+  } catch (err: any) {
+    res.status(503).json({
+      status: 'unready',
+      service: 'nexus-signaling-server',
+      error: 'Database connection check failed',
+      timestamp: new Date().toISOString(),
+    });
+  }
 });
 
 // API Routes
@@ -113,15 +140,13 @@ app.use(errorMiddleware);
 // Socket.IO handlers
 setupMeetingHandler(io);
 
-// Redis Pub/Sub for ML events
-initRedisSubscriber(io);
-
 // Start server
 const PORT = process.env.PORT || 4000;
 
 const startServer = async () => {
   await connectDB();
   await initMailer();
+  startLifecycleWorker(60000);
   server.listen(PORT, () => {
     console.log(`\n🚀 Nexus Signaling Server running on port ${PORT}`);
     console.log(`🔗 API: http://localhost:${PORT}/api`);

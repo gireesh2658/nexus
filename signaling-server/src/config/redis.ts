@@ -22,7 +22,7 @@ export const redis1 = rawUri
         return Math.min(times * 500, 3000);
       },
       lazyConnect: false,
-      enableOfflineQueue: false,
+      enableOfflineQueue: true,
     })
   : (null as unknown as Redis);
 

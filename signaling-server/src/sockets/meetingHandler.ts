@@ -2,6 +2,7 @@ import { Server, Socket } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import { jwtConfig } from '../config/jwtConfig';
 import { prisma } from '../config/db';
+import { isMeetingExpired } from '../services/meetingLifecycle';
 
 interface ParticipantInfo {
   socketId: string;
@@ -15,7 +16,7 @@ interface MeetingRoom {
   meetingId: string;
   roomCode: string;
   hostId: string;
-  status: 'scheduled' | 'waiting' | 'active' | 'ended';
+  status: 'scheduled' | 'waiting' | 'active' | 'ended' | 'cancelled' | 'expired';
   actualStartTime: Date | null;
   waitingRoomEnabled: boolean;
   preventUnmute: boolean;
@@ -26,6 +27,16 @@ interface MeetingRoom {
 }
 
 const activeRooms = new Map<string, MeetingRoom>();
+
+const findActiveRoom = (idOrCode: string): MeetingRoom | undefined => {
+  if (!idOrCode) return undefined;
+  const direct = activeRooms.get(idOrCode);
+  if (direct) return direct;
+  for (const room of activeRooms.values()) {
+    if (room.roomCode === idOrCode) return room;
+  }
+  return undefined;
+};
 
 export const setupMeetingHandler = (io: Server): void => {
   io.on('connection', (socket: Socket) => {
@@ -68,8 +79,17 @@ export const setupMeetingHandler = (io: Server): void => {
           return;
         }
 
-        if (meeting.status === 'ended' || meeting.status === 'cancelled') {
-          socket.emit('join-error', { error: 'This meeting has ended.' });
+        if (meeting.status === 'ended' || meeting.status === 'cancelled' || meeting.status === 'expired' || isMeetingExpired(meeting)) {
+          const expired = meeting.status === 'expired' || isMeetingExpired(meeting);
+          if (expired && meeting.status !== 'expired') {
+            await prisma.meeting.update({ where: { id: meeting.id }, data: { status: 'expired' } }).catch(() => {});
+          }
+          const errorMsg = meeting.status === 'cancelled'
+            ? 'This meeting was cancelled.'
+            : expired
+            ? 'This scheduled meeting has expired and can no longer be joined.'
+            : 'This meeting has ended.';
+          socket.emit('join-error', { error: errorMsg });
           return;
         }
 
@@ -123,6 +143,9 @@ export const setupMeetingHandler = (io: Server): void => {
         }
 
         socket.join(`meeting:${roomKey}`);
+        if (meeting.roomCode && meeting.roomCode !== roomKey) {
+          socket.join(`meeting:${meeting.roomCode}`);
+        }
         room.participants.set(userId, { socketId: socket.id, username, name, avatarColor, joinedAt: new Date() });
 
         if (room.idleTimeout) {
@@ -146,6 +169,9 @@ export const setupMeetingHandler = (io: Server): void => {
                if (wSocket) {
                  wSocket.leave(`waiting:${roomKey}`);
                  wSocket.join(`meeting:${roomKey}`);
+                 if (meeting.roomCode && meeting.roomCode !== roomKey) {
+                   wSocket.join(`meeting:${meeting.roomCode}`);
+                 }
                  wSocket.emit('admitted', { actualStartTime: room.actualStartTime });
                }
              }
@@ -184,14 +210,17 @@ export const setupMeetingHandler = (io: Server): void => {
           actualStartTime: room.actualStartTime
         });
 
+        socket.emit('room-status', { status: room.status, actualStartTime: room.actualStartTime });
+
       } catch (err) {
         console.error('[Meeting] Error in join-room:', err);
       }
     });
 
     socket.on('host-admit', (data: { meetingId: string; targetUserId: string }) => {
-      const room = activeRooms.get(data.meetingId);
+      const room = findActiveRoom(data.meetingId);
       if (!room || room.hostId !== userId) return;
+      const canonicalId = room.meetingId;
 
       const pInfo = room.waitingParticipants.get(data.targetUserId);
       if (pInfo) {
@@ -200,12 +229,15 @@ export const setupMeetingHandler = (io: Server): void => {
         
         const wSocket = io.sockets.sockets.get(pInfo.socketId);
         if (wSocket) {
-          wSocket.leave(`waiting:${data.meetingId}`);
-          wSocket.join(`meeting:${data.meetingId}`);
+          wSocket.leave(`waiting:${canonicalId}`);
+          wSocket.join(`meeting:${canonicalId}`);
+          if (room.roomCode && room.roomCode !== canonicalId) {
+            wSocket.join(`meeting:${room.roomCode}`);
+          }
           wSocket.emit('admitted', { actualStartTime: room.actualStartTime });
         }
 
-        io.to(`meeting:${data.meetingId}`).emit('user-joined', {
+        io.to(`meeting:${canonicalId}`).emit('user-joined', {
           userId: data.targetUserId,
           ...pInfo,
           participants: Array.from(room.participants.entries()).map(([uid, info]) => ({ userId: uid, ...info })),
@@ -215,7 +247,7 @@ export const setupMeetingHandler = (io: Server): void => {
     });
 
     socket.on('host-deny', (data: { meetingId: string; targetUserId: string }) => {
-      const room = activeRooms.get(data.meetingId);
+      const room = findActiveRoom(data.meetingId);
       if (!room || room.hostId !== userId) return;
 
       const pInfo = room.waitingParticipants.get(data.targetUserId);
@@ -226,61 +258,64 @@ export const setupMeetingHandler = (io: Server): void => {
     });
 
     socket.on('end-meeting-for-all', async (data: { meetingId: string }) => {
-      const room = activeRooms.get(data.meetingId);
+      const room = findActiveRoom(data.meetingId);
       if (!room || room.hostId !== userId) return;
+      const canonicalId = room.meetingId;
 
       const now = new Date();
       const durationSecs = room.actualStartTime ? Math.floor((now.getTime() - room.actualStartTime.getTime()) / 1000) : 0;
 
       await prisma.meeting.update({
-        where: { id: data.meetingId },
+        where: { id: canonicalId },
         data: { status: 'ended', actualEndTime: now, endedAt: now, actualDurationSecs: durationSecs }
       });
 
-      for (const [uid, pInfo] of room.participants.entries()) {
+      for (const [uid] of room.participants.entries()) {
          await prisma.participant.updateMany({
-           where: { meetingId: data.meetingId, userId: uid },
+           where: { meetingId: canonicalId, userId: uid },
            data: { leaveTime: now }
          });
       }
 
-      io.to(`meeting:${data.meetingId}`).emit('meeting-ended-by-host', { redirectAfter: 3000 });
-      activeRooms.delete(data.meetingId);
+      io.to(`meeting:${canonicalId}`).emit('meeting-ended-by-host', { redirectAfter: 3000 });
+      io.to(`meeting:${canonicalId}`).emit('meeting-ended', { redirectAfter: 3000 });
+      activeRooms.delete(canonicalId);
     });
 
     socket.on('host-transfer', async (data: { meetingId: string; newHostId: string }) => {
-      const room = activeRooms.get(data.meetingId);
+      const room = findActiveRoom(data.meetingId);
       if (!room || room.hostId !== userId) return;
+      const canonicalId = room.meetingId;
       
       if (room.participants.has(data.newHostId)) {
         room.hostId = data.newHostId;
-        await prisma.meeting.update({ where: { id: data.meetingId }, data: { hostId: data.newHostId } });
-        io.to(`meeting:${data.meetingId}`).emit('host-transferred', { newHostId: data.newHostId });
+        await prisma.meeting.update({ where: { id: canonicalId }, data: { hostId: data.newHostId } });
+        io.to(`meeting:${canonicalId}`).emit('host-transferred', { newHostId: data.newHostId });
       }
     });
 
     socket.on('host-spotlight', (data: { meetingId: string; targetUserId: string | null }) => {
-      const room = activeRooms.get(data.meetingId);
+      const room = findActiveRoom(data.meetingId);
       if (!room || room.hostId !== userId) return;
-      io.to(`meeting:${data.meetingId}`).emit('spotlight-changed', { spotlightedUserId: data.targetUserId });
+      io.to(`meeting:${room.meetingId}`).emit('spotlight-changed', { spotlightedUserId: data.targetUserId });
     });
 
     socket.on('host-lock-meeting', async (data: { meetingId: string; isLocked: boolean }) => {
-      const room = activeRooms.get(data.meetingId);
+      const room = findActiveRoom(data.meetingId);
       if (!room || room.hostId !== userId) return;
       room.isLocked = data.isLocked;
-      io.to(`meeting:${data.meetingId}`).emit('meeting-locked-state', { isLocked: data.isLocked });
+      io.to(`meeting:${room.meetingId}`).emit('meeting-locked-state', { isLocked: data.isLocked });
     });
 
     socket.on('host-mute-all', async (data: { meetingId: string; preventUnmute: boolean }) => {
-      const room = activeRooms.get(data.meetingId);
+      const room = findActiveRoom(data.meetingId);
       if (!room || room.hostId !== userId) return;
       room.preventUnmute = data.preventUnmute;
-      socket.to(`meeting:${data.meetingId}`).emit('force-mute', { preventUnmute: data.preventUnmute });
+      socket.to(`meeting:${room.meetingId}`).emit('force-mute', { preventUnmute: data.preventUnmute });
     });
 
     socket.on('request-unmute', (data: { meetingId: string }) => {
-      const room = activeRooms.get(data.meetingId);
+      const room = findActiveRoom(data.meetingId);
       if (room && room.preventUnmute) {
          const pInfo = room.participants.get(userId);
          if (pInfo) {
@@ -290,35 +325,37 @@ export const setupMeetingHandler = (io: Server): void => {
     });
 
     socket.on('approve-unmute', (data: { meetingId: string; targetUserId: string }) => {
-      const room = activeRooms.get(data.meetingId);
+      const room = findActiveRoom(data.meetingId);
       if (!room || room.hostId !== userId) return;
       io.to(`user:${data.targetUserId}`).emit('unmute-approved');
     });
 
     socket.on('host-remove', async (data: { meetingId: string; targetUserId: string }) => {
-      const room = activeRooms.get(data.meetingId);
+      const room = findActiveRoom(data.meetingId);
       if (!room || room.hostId !== userId) return;
+      const canonicalId = room.meetingId;
 
       io.to(`user:${data.targetUserId}`).emit('force-remove', { message: 'You have been removed by the host.' });
       
       const pInfo = room.participants.get(data.targetUserId);
       if (pInfo) {
          room.participants.delete(data.targetUserId);
-         io.to(`meeting:${data.meetingId}`).emit('user-left', {
+         io.to(`meeting:${canonicalId}`).emit('user-left', {
             userId: data.targetUserId,
             participants: Array.from(room.participants.entries()).map(([uid, info]) => ({ userId: uid, ...info }))
          });
       }
 
       await prisma.participant.updateMany({
-        where: { meetingId: data.meetingId, userId: data.targetUserId },
+        where: { meetingId: canonicalId, userId: data.targetUserId },
         data: { status: 'removed', leaveTime: new Date() }
       });
     });
 
-    const handleLeave = async (meetingId: string, uId: string) => {
-      const room = activeRooms.get(meetingId);
+    const handleLeave = async (meetingIdOrCode: string, uId: string) => {
+      const room = findActiveRoom(meetingIdOrCode);
       if (!room) return;
+      const canonicalId = room.meetingId;
 
       if (room.waitingParticipants.has(uId)) {
         room.waitingParticipants.delete(uId);
@@ -331,11 +368,11 @@ export const setupMeetingHandler = (io: Server): void => {
         
         const now = new Date();
         await prisma.participant.updateMany({
-          where: { meetingId, userId: uId },
+          where: { meetingId: canonicalId, userId: uId },
           data: { leaveTime: now }
         });
 
-        io.to(`meeting:${meetingId}`).emit('user-left', {
+        io.to(`meeting:${canonicalId}`).emit('user-left', {
           userId: uId,
           participants: Array.from(room.participants.entries()).map(([id, info]) => ({ userId: id, ...info })),
         });
@@ -343,15 +380,15 @@ export const setupMeetingHandler = (io: Server): void => {
         if (room.participants.size === 0) {
           if (!room.idleTimeout) {
             room.idleTimeout = setTimeout(async () => {
-               const activeRoom = activeRooms.get(meetingId);
+               const activeRoom = activeRooms.get(canonicalId);
                if (activeRoom && activeRoom.participants.size === 0) {
                   const endNow = new Date();
                   const duration = activeRoom.actualStartTime ? Math.floor((endNow.getTime() - activeRoom.actualStartTime.getTime())/1000) : 0;
                   await prisma.meeting.update({
-                    where: { id: meetingId },
+                    where: { id: canonicalId },
                     data: { status: 'ended', actualEndTime: endNow, endedAt: endNow, actualDurationSecs: duration }
                   });
-                  activeRooms.delete(meetingId);
+                  activeRooms.delete(canonicalId);
                }
             }, 60000);
           }
@@ -366,16 +403,19 @@ export const setupMeetingHandler = (io: Server): void => {
           }
           if (earliestUser) {
              room.hostId = earliestUser;
-             await prisma.meeting.update({ where: { id: meetingId }, data: { hostId: earliestUser } });
-             io.to(`meeting:${meetingId}`).emit('host-transferred', { newHostId: earliestUser });
+             await prisma.meeting.update({ where: { id: canonicalId }, data: { hostId: earliestUser } });
+             io.to(`meeting:${canonicalId}`).emit('host-transferred', { newHostId: earliestUser });
           }
         }
       }
     };
 
     socket.on('leave-room', (data: { meetingId: string }) => {
-      socket.leave(`meeting:${data.meetingId}`);
-      handleLeave(data.meetingId, userId);
+      const room = findActiveRoom(data.meetingId);
+      const canonicalId = room ? room.meetingId : data.meetingId;
+      socket.leave(`meeting:${canonicalId}`);
+      if (room?.roomCode) socket.leave(`meeting:${room.roomCode}`);
+      handleLeave(canonicalId, userId);
     });
 
     socket.on('disconnect', () => {
@@ -385,16 +425,16 @@ export const setupMeetingHandler = (io: Server): void => {
     });
 
     socket.on('behavioral-signal', (data: { meetingId: string; signal: any }) => {
-      const room = activeRooms.get(data.meetingId);
+      const room = findActiveRoom(data.meetingId);
       if (room && room.participants.has(userId)) {
-        io.to(`meeting:${data.meetingId}`).emit('behavioral-update', { userId, signal: data.signal });
+        io.to(`meeting:${room.meetingId}`).emit('behavioral-update', { userId, signal: data.signal });
       }
     });
 
     socket.on('send-chat', (data: { meetingId: string; text: string; senderId: string; senderName: string }) => {
-      const room = activeRooms.get(data.meetingId);
+      const room = findActiveRoom(data.meetingId);
       if (room && room.participants.has(userId)) {
-        socket.to(`meeting:${data.meetingId}`).emit('chat-message', {
+        socket.to(`meeting:${room.meetingId}`).emit('chat-message', {
           id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
           senderId: data.senderId, senderName: data.senderName, text: data.text, timestamp: new Date().toISOString()
         });
@@ -402,14 +442,26 @@ export const setupMeetingHandler = (io: Server): void => {
     });
 
     socket.on('live-transcript', async (data: { meetingId: string; text: string; isFinal: boolean; userName: string; actualStartTime?: string }) => {
-      const room = activeRooms.get(data.meetingId);
+      const room = findActiveRoom(data.meetingId);
       if (room && room.participants.has(userId)) {
-        io.to(`meeting:${data.meetingId}`).emit('live-transcript', {
+        io.to(`meeting:${room.meetingId}`).emit('live-transcript', {
           userId, userName: data.userName, text: data.text, isFinal: data.isFinal, timestamp: new Date().toISOString()
         });
-        
-        // Note: Transcript saving is offloaded to Analysis API via Redpanda and TimescaleDB
       }
+    });
+
+    socket.on('draw-line', (data: { meetingId: string; x0: number; y0: number; x1: number; y1: number; color: string; lineWidth: number }) => {
+      if (!data?.meetingId) return;
+      const room = findActiveRoom(data.meetingId);
+      const canonicalId = room ? room.meetingId : data.meetingId;
+      socket.to(`meeting:${canonicalId}`).emit('draw-line', data);
+    });
+
+    socket.on('draw-clear', (data: { meetingId: string }) => {
+      if (!data?.meetingId) return;
+      const room = findActiveRoom(data.meetingId);
+      const canonicalId = room ? room.meetingId : data.meetingId;
+      socket.to(`meeting:${canonicalId}`).emit('draw-clear');
     });
   });
 };

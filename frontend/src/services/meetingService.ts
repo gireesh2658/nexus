@@ -1,14 +1,15 @@
 import api from './api';
-import type { Meeting, Participant } from '../types';
+import type { Meeting, Participant, MeetingsResponse } from '../types';
 
 export const meetingService = {
-  createMeeting: async (data: { title: string, participantUsernames: string[], scheduledAt: string, scheduledDurationMins: number }): Promise<{ meeting: Meeting }> => {
+  createMeeting: async (data: { title: string, participantUsernames: string[], scheduledAt: string, scheduledDurationMins: number, description?: string }): Promise<{ meeting: Meeting }> => {
     const res = await api.post('/meetings', data);
     return res.data;
   },
 
-  getMyMeetings: async (): Promise<{ hosted: Meeting[], invited: Meeting[] }> => {
-    const res = await api.get('/meetings');
+  getMyMeetings: async (filter?: 'upcoming' | 'active' | 'history' | 'all'): Promise<MeetingsResponse> => {
+    const params = filter ? { filter } : {};
+    const res = await api.get('/meetings', { params });
     return res.data;
   },
 
@@ -24,6 +25,21 @@ export const meetingService = {
 
   updateStatus: async (id: string, status: string): Promise<{ meeting: Meeting }> => {
     const res = await api.patch(`/meetings/${id}/status`, { status });
+    return res.data;
+  },
+
+  cancelMeeting: async (id: string): Promise<{ message: string, meeting: Meeting }> => {
+    const res = await api.post(`/meetings/${id}/cancel`);
+    return res.data;
+  },
+
+  endMeeting: async (id: string): Promise<{ message: string, summaryId?: string, meetingId: string }> => {
+    const res = await api.post(`/meetings/${id}/end`);
+    return res.data;
+  },
+
+  getMeetingSummary: async (id: string): Promise<any> => {
+    const res = await api.get(`/meetings/${id}/summary`);
     return res.data;
   },
 

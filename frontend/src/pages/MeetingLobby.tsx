@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Shield, CheckCircle, Video, Mic, MicOff, VideoOff, ArrowRight, Brain, Layers } from 'lucide-react';
 import { meetingService } from '../services/meetingService';
@@ -13,13 +13,14 @@ const MeetingLobby = () => {
   const [meeting, setMeeting] = useState<Meeting | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [hasConsent, setHasConsent] = useState(false);
-  const [isConsentGiven, setIsConsentGiven] = useState(false); // Track if API call was made
+  const [isConsentGiven, setIsConsentGiven] = useState(false);
+  const [isJoining, setIsJoining] = useState(false);
   
   const { isMicMuted, isCameraOff, toggleMic, toggleCamera } = useMeetingStore();
   const videoRef = useRef<HTMLVideoElement>(null);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
 
-  const initPreview = async () => {
+  const initPreview = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       setLocalStream(stream);
@@ -27,34 +28,60 @@ const MeetingLobby = () => {
         videoRef.current.srcObject = stream;
       }
     } catch (err) {
-      console.error(err);
-      toast.error('Camera/Microphone access denied');
+      console.warn('Camera/Microphone preview access not granted:', err);
     }
-  };
+  }, []);
 
-  const fetchMeeting = async () => {
+  const fetchMeeting = useCallback(async () => {
     try {
       if (!roomId) return;
       const data = await meetingService.getMeetingByRoomCode(roomId);
-      setMeeting(data.meeting);
-    } catch (err: unknown) {
+      const m = data.meeting;
+
+      if (!m) {
+        toast.error('Meeting not found');
+        navigate('/meetings');
+        return;
+      }
+
+      // Check terminal state before offering Join or initializing camera preview
+      if (m.status === 'ended') {
+        toast('This meeting has already ended. Redirecting to summary debrief...');
+        navigate(`/meeting/${m.id}/summary`);
+        return;
+      }
+
+      if (m.status === 'expired') {
+        toast.error('This meeting has expired and cannot be joined.');
+        navigate('/meetings');
+        return;
+      }
+
+      if (m.status === 'cancelled') {
+        toast.error('This meeting was cancelled.');
+        navigate('/meetings');
+        return;
+      }
+
+      setMeeting(m);
+      // Valid non-terminal meeting: initialize camera preview
+      initPreview();
+    } catch (err: any) {
       console.error(err);
-      toast.error('Failed to fetch meeting');
-      navigate('/dashboard');
+      const errorMsg = err.response?.data?.error || 'Failed to fetch meeting';
+      toast.error(errorMsg);
+      navigate('/meetings');
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [roomId, navigate, initPreview]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchMeeting();
-    initPreview();
     return () => {
       localStream?.getTracks().forEach(t => t.stop());
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [fetchMeeting]);
 
   useEffect(() => {
     if (localStream) {
@@ -64,16 +91,34 @@ const MeetingLobby = () => {
   }, [isMicMuted, isCameraOff, localStream]);
 
   const handleJoin = async () => {
-    if (!meeting) return;
+    if (!meeting || isJoining) return;
     
+    // Guard against joining if status transitioned to terminal
+    if (meeting.status === 'ended') {
+      toast.error('This meeting has ended.');
+      navigate(`/meeting/${meeting.id}/summary`);
+      return;
+    }
+    if (meeting.status === 'expired' || meeting.status === 'cancelled') {
+      toast.error(`Cannot join: meeting is ${meeting.status}.`);
+      navigate('/meetings');
+      return;
+    }
+
+    setIsJoining(true);
+
     if (meeting.analyticsEnabled && !isConsentGiven) {
       try {
-        await meetingService.giveConsent(meeting._id);
+        await meetingService.giveConsent(meeting.id);
         setIsConsentGiven(true);
+        useMeetingStore.getState().setConsentGiven(true);
       } catch (err) {
         console.error(err);
+        setIsJoining(false);
         return toast.error('Failed to record consent');
       }
+    } else if (hasConsent) {
+      useMeetingStore.getState().setConsentGiven(true);
     }
 
     // Stop local preview stream to free device for actual meeting room
@@ -82,7 +127,7 @@ const MeetingLobby = () => {
   };
 
   if (isLoading) {
-    return <div className="min-h-screen bg-nexus-bg flex items-center justify-center text-nexus-muted">Loading...</div>;
+    return <div className="min-h-screen bg-nexus-bg flex items-center justify-center text-nexus-muted">Verifying meeting security...</div>;
   }
 
   if (!meeting) return null;
@@ -123,10 +168,10 @@ const MeetingLobby = () => {
             
             {/* Name label */}
             <div className="absolute bottom-4 left-4 video-label text-sm font-medium">
-              {meeting.hostId?.name || 'You'}
+              {meeting.host?.name || 'You'}
             </div>
 
-            {/* Floating matte control pill — NO blur */}
+            {/* Floating matte control pill */}
             <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-3 px-4 py-2.5 rounded-pill matte-overlay">
               <button 
                 onClick={toggleMic}
@@ -150,7 +195,7 @@ const MeetingLobby = () => {
         {/* Right Side: Details & Consent */}
         <div className="flex flex-col justify-center">
           <h2 className="text-2xl font-semibold font-display mb-1">{meeting.title}</h2>
-          <p className="text-nexus-muted text-sm mb-8">Host: {(meeting.hostId as { name?: string })?.name}</p>
+          <p className="text-nexus-muted text-sm mb-8">Host: {(meeting.host as { name?: string })?.name || 'Meeting Host'}</p>
 
           {/* Badges */}
           <div className="flex flex-col gap-3 mb-8">
@@ -179,6 +224,7 @@ const MeetingLobby = () => {
               <div className="relative flex items-center justify-center mt-0.5">
                 <input 
                   type="checkbox" 
+                  data-testid="consent-checkbox"
                   className="peer sr-only"
                   checked={hasConsent}
                   onChange={(e) => setHasConsent(e.target.checked)}
@@ -193,13 +239,14 @@ const MeetingLobby = () => {
             </label>
           )}
 
-          {/* Join Button — signal gradient, pill */}
+          {/* Join Button */}
           <button 
+            data-testid="join-now-btn"
             onClick={handleJoin}
-            disabled={meeting.analyticsEnabled && !hasConsent}
+            disabled={(meeting.analyticsEnabled && !hasConsent) || isJoining}
             className="w-full py-4 rounded-pill font-semibold text-lg btn-signal flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Join now
+            {isJoining ? 'Connecting...' : 'Join now'}
             <ArrowRight className="w-5 h-5" />
           </button>
         </div>

@@ -5,7 +5,7 @@ import { randomBytes } from 'crypto';
 import { AuthRequest } from '../middleware/authMiddleware';
 import { prisma } from '../config/db';
 import { jwtConfig } from '../config/jwtConfig';
-import { redis1 } from '../config/redis';
+import { redis1, isRedisAvailable } from '../config/redis';
 
 const generateAccessToken = (userId: string, jti: string): string => {
   return jwt.sign({ userId, jti }, jwtConfig.privateKey, { expiresIn: '24h', algorithm: jwtConfig.algorithm });
@@ -55,7 +55,13 @@ export const register = async (req: AuthRequest, res: Response): Promise<void> =
     const token = generateAccessToken(user.id, jti);
     const refreshToken = generateRefreshTokenPayload(user.id, refreshJti);
 
-    await redis1.set(`rt_family:${user.id}`, JSON.stringify({ current: refreshToken, used: [] }), 'EX', 7 * 24 * 60 * 60);
+    if (redis1 && isRedisAvailable()) {
+      try {
+        await redis1.set(`rt_family:${user.id}`, JSON.stringify({ current: refreshToken, used: [] }), 'EX', 7 * 24 * 60 * 60);
+      } catch (err) {
+        console.warn('[Auth] Redis set rt_family warning:', err);
+      }
+    }
 
     res.cookie('refreshToken', refreshToken, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', maxAge: 7 * 24 * 60 * 60 * 1000 });
     res.cookie('jwt', token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', maxAge: 24 * 60 * 60 * 1000 });
@@ -105,7 +111,13 @@ export const login = async (req: AuthRequest, res: Response): Promise<void> => {
     const token = generateAccessToken(user.id, jti);
     const refreshToken = generateRefreshTokenPayload(user.id, refreshJti);
 
-    await redis1.set(`rt_family:${user.id}`, JSON.stringify({ current: refreshToken, used: [] }), 'EX', 7 * 24 * 60 * 60);
+    if (redis1 && isRedisAvailable()) {
+      try {
+        await redis1.set(`rt_family:${user.id}`, JSON.stringify({ current: refreshToken, used: [] }), 'EX', 7 * 24 * 60 * 60);
+      } catch (err) {
+        console.warn('[Auth] Redis set rt_family warning:', err);
+      }
+    }
 
     res.cookie('refreshToken', refreshToken, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', maxAge: 7 * 24 * 60 * 60 * 1000 });
     res.cookie('jwt', token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', maxAge: 24 * 60 * 60 * 1000 });
@@ -124,6 +136,11 @@ export const refresh = async (req: AuthRequest, res: Response): Promise<void> =>
     const token = req.cookies.refreshToken;
     if (!token) {
       res.status(401).json({ error: 'No refresh token' });
+      return;
+    }
+
+    if (!redis1 || !isRedisAvailable()) {
+      res.status(503).json({ error: 'Session store unavailable. Cannot verify refresh token.' });
       return;
     }
 
@@ -171,18 +188,24 @@ export const refresh = async (req: AuthRequest, res: Response): Promise<void> =>
 export const logout = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const token = req.cookies.jwt;
-    if (token) {
-      const decoded = jwt.decode(token) as { jti?: string, exp?: number };
-      if (decoded && decoded.jti && decoded.exp) {
-        const remainingTime = decoded.exp - Math.floor(Date.now() / 1000);
-        if (remainingTime > 0) {
-          await redis1.set(`bl_${decoded.jti}`, '1', 'EX', remainingTime);
+    if (redis1 && isRedisAvailable()) {
+      try {
+        if (token) {
+          const decoded = jwt.decode(token) as { jti?: string, exp?: number };
+          if (decoded && decoded.jti && decoded.exp) {
+            const remainingTime = decoded.exp - Math.floor(Date.now() / 1000);
+            if (remainingTime > 0) {
+              await redis1.set(`bl_${decoded.jti}`, '1', 'EX', remainingTime);
+            }
+          }
         }
+
+        if (req.user) {
+          await redis1.del(`rt_family:${req.user.id}`);
+        }
+      } catch (err) {
+        console.warn('[Auth] Redis logout warning:', err);
       }
-    }
-    
-    if (req.user) {
-      await redis1.del(`rt_family:${req.user.id}`);
     }
 
     res.clearCookie('jwt');
