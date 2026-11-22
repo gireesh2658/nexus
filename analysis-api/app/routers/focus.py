@@ -15,10 +15,10 @@ JWT_PUBLIC_KEY = os.getenv("JWT_PUBLIC_KEY")
 def verify_token(token: str) -> bool:
     try:
         if JWT_PUBLIC_KEY:
-            jwt.decode(token, JWT_PUBLIC_KEY, algorithms=["RS256"])
+            payload = jwt.decode(token, JWT_PUBLIC_KEY, algorithms=["RS256"])
         else:
-            jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
-        return True
+            payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        return payload.get("typ") == "access"
     except Exception:
         return False
 

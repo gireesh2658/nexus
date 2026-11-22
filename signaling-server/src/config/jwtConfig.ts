@@ -21,7 +21,7 @@ export const jwtConfig = {
   // For RS256, they resolve to the PEM-encoded key pair from env.
   privateKey: process.env.JWT_PRIVATE_KEY || secret,
   publicKey:  process.env.JWT_PUBLIC_KEY  || secret,
-  expiresIn: '24h' as const,
+  expiresIn: '15m' as const,
   algorithm,
 };
 

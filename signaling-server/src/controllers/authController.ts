@@ -8,11 +8,11 @@ import { jwtConfig } from '../config/jwtConfig';
 import { redis1, isRedisAvailable } from '../config/redis';
 
 const generateAccessToken = (userId: string, jti: string): string => {
-  return jwt.sign({ userId, jti }, jwtConfig.privateKey, { expiresIn: '24h', algorithm: jwtConfig.algorithm });
+  return jwt.sign({ userId, jti, typ: 'access' }, jwtConfig.privateKey, { expiresIn: '15m', algorithm: jwtConfig.algorithm });
 };
 
 const generateRefreshTokenPayload = (userId: string, jti: string): string => {
-  return jwt.sign({ userId, jti }, jwtConfig.privateKey, { expiresIn: '7d', algorithm: jwtConfig.algorithm });
+  return jwt.sign({ userId, jti, typ: 'refresh' }, jwtConfig.privateKey, { expiresIn: '7d', algorithm: jwtConfig.algorithm });
 };
 
 export const register = async (req: AuthRequest, res: Response): Promise<void> => {
@@ -64,7 +64,7 @@ export const register = async (req: AuthRequest, res: Response): Promise<void> =
     }
 
     res.cookie('refreshToken', refreshToken, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', maxAge: 7 * 24 * 60 * 60 * 1000 });
-    res.cookie('jwt', token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', maxAge: 24 * 60 * 60 * 1000 });
+    res.cookie('jwt', token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', maxAge: 15 * 60 * 1000 });
 
     res.status(201).json({
       user: { id: user.id, name: user.name, username: user.username, email: user.email, role: user.role, avatarColor: user.avatarColor },
@@ -120,7 +120,7 @@ export const login = async (req: AuthRequest, res: Response): Promise<void> => {
     }
 
     res.cookie('refreshToken', refreshToken, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', maxAge: 7 * 24 * 60 * 60 * 1000 });
-    res.cookie('jwt', token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', maxAge: 24 * 60 * 60 * 1000 });
+    res.cookie('jwt', token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', maxAge: 15 * 60 * 1000 });
 
     res.json({
       user: { id: user.id, name: user.name, username: user.username, email: user.email, role: user.role, avatarColor: user.avatarColor },
@@ -144,7 +144,11 @@ export const refresh = async (req: AuthRequest, res: Response): Promise<void> =>
       return;
     }
 
-    const payload = jwt.verify(token, jwtConfig.publicKey, { algorithms: [jwtConfig.algorithm] }) as { userId: string, jti?: string };
+    const payload = jwt.verify(token, jwtConfig.publicKey, { algorithms: [jwtConfig.algorithm] }) as { userId: string, jti?: string, typ?: string };
+    if (payload.typ !== 'refresh') {
+      res.status(401).json({ error: 'Invalid token type. Refresh token required.' });
+      return;
+    }
     const familyData = await redis1.get(`rt_family:${payload.userId}`);
     
     if (!familyData) {
@@ -177,7 +181,7 @@ export const refresh = async (req: AuthRequest, res: Response): Promise<void> =>
     const newAccess = generateAccessToken(payload.userId, jti);
 
     res.cookie('refreshToken', newRefresh, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', maxAge: 7 * 24 * 60 * 60 * 1000 });
-    res.cookie('jwt', newAccess, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', maxAge: 24 * 60 * 60 * 1000 });
+    res.cookie('jwt', newAccess, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', maxAge: 15 * 60 * 1000 });
 
     res.json({ token: newAccess });
   } catch (error) {

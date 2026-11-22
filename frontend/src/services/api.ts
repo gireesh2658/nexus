@@ -19,29 +19,48 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Response interceptor: auto-refresh on 401
+// Single-flight refresh promise for concurrent 401s
+let refreshPromise: Promise<string | null> | null = null;
+
+// Response interceptor: auto-refresh on 401 with single-flight logic
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const original = error.config;
 
-    // If we get a 401 and haven't retried yet, try refreshing the token
+    // If skip flag is set or already retried, do not attempt refresh
+    if (!original || original._skipAuthRefresh) {
+      return Promise.reject(error);
+    }
+
     if (error.response?.status === 401 && !original._retry) {
       original._retry = true;
 
-      try {
-        const { data } = await axios.post(
-          (import.meta.env.VITE_SIGNAL_URL || '') + '/api/auth/refresh',
-          {},
-          { withCredentials: true },
-        );
-        if (data.token) {
-          useAuthStore.getState().setToken(data.token);
-          original.headers.Authorization = `Bearer ${data.token}`;
-          return api(original);
-        }
-      } catch {
-        // Refresh failed — force logout
+      if (!refreshPromise) {
+        refreshPromise = (async () => {
+          try {
+            const { data } = await axios.post(
+              (import.meta.env.VITE_SIGNAL_URL || '') + '/api/auth/refresh',
+              {},
+              { withCredentials: true },
+            );
+            if (data.token) {
+              useAuthStore.getState().setToken(data.token);
+              return data.token as string;
+            }
+            return null;
+          } catch {
+            return null;
+          } finally {
+            refreshPromise = null;
+          }
+        })();
+      }
+
+      const newToken = await refreshPromise;
+      if (newToken) {
+        original.headers.Authorization = `Bearer ${newToken}`;
+        return api(original);
       }
 
       useAuthStore.getState().logout();

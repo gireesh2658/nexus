@@ -11,19 +11,25 @@ class SocketService {
       return this.socket;
     }
 
-    const token = useAuthStore.getState().token;
-    
+    if (this.socket) {
+      this.socket.connect();
+      return this.socket;
+    }
+
     this.socket = io(SIGNAL_URL, {
-      auth: { token },
+      auth: (cb: (data: { token?: string | null }) => void) => {
+        cb({ token: useAuthStore.getState().token });
+      },
       transports: ['websocket', 'polling'],
+      autoConnect: true,
     });
 
     this.socket.on('connect', () => {
-      // Intentionally left blank or handle logic
+      // Connection established
     });
 
     this.socket.on('disconnect', () => {
-      // Intentionally left blank
+      // Disconnected
     });
 
     this.socket.on('auth-error', (data: { error: string }) => {
@@ -37,7 +43,7 @@ class SocketService {
     return this.socket;
   }
 
-  disconnect() {
+  disconnect(): void {
     if (this.socket) {
       this.socket.disconnect();
       this.socket = null;
@@ -46,3 +52,26 @@ class SocketService {
 }
 
 export const socketService = new SocketService();
+
+// Subscribe to the auth store inside socket.ts:
+// Disconnect on logout or user change, recreate on login
+let currentUserId: string | null = useAuthStore.getState().user?.id || null;
+
+useAuthStore.subscribe((state) => {
+  const newUserId = state.user?.id || null;
+
+  if (newUserId !== currentUserId) {
+    if (!newUserId) {
+      // User logged out
+      socketService.disconnect();
+    } else if (currentUserId && newUserId !== currentUserId) {
+      // User switched account
+      socketService.disconnect();
+      socketService.connect();
+    } else if (!currentUserId && newUserId) {
+      // Logged in
+      socketService.connect();
+    }
+    currentUserId = newUserId;
+  }
+});

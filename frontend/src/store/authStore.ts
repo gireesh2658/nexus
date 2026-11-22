@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import api from '../services/api';
+import axios from 'axios';
 import type { User } from '../types';
 
 interface AuthState {
@@ -27,7 +27,11 @@ export const useAuthStore = create<AuthState>()(
 
     logout: async () => {
       try {
-        await api.post('/auth/logout');
+        await axios.post(
+          (import.meta.env.VITE_SIGNAL_URL || '') + '/api/auth/logout',
+          {},
+          { withCredentials: true }
+        );
       } catch {
         // Ignore
       }

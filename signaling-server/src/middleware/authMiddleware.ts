@@ -23,7 +23,12 @@ export const authMiddleware = async (req: AuthRequest, res: Response, next: Next
 
     const decoded = jwt.verify(token, jwtConfig.publicKey, {
       algorithms: [jwtConfig.algorithm],
-    }) as { userId: string; jti?: string };
+    }) as { userId: string; jti?: string; typ?: string };
+
+    if (decoded.typ !== 'access') {
+      res.status(401).json({ error: 'Invalid token type. Access token required.' });
+      return;
+    }
 
     if (decoded.jti && redis1 && isRedisAvailable()) {
       try {

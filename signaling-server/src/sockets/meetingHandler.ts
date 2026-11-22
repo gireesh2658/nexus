@@ -51,7 +51,14 @@ export const setupMeetingHandler = (io: Server): void => {
     try {
       const decoded = jwt.verify(token, jwtConfig.publicKey, {
         algorithms: [jwtConfig.algorithm],
-      }) as { userId: string };
+      }) as { userId: string; jti?: string; typ?: string };
+
+      if (decoded.typ !== 'access') {
+        socket.emit('auth-error', { error: 'Invalid token type. Access token required.' });
+        socket.disconnect(true);
+        return;
+      }
+
       userId = decoded.userId;
     } catch {
       socket.emit('auth-error', { error: 'Invalid or expired token' });

@@ -24,6 +24,10 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Security(security))
             payload = jwt.decode(token, public_key, algorithms=["RS256"])
         else:
             payload = jwt.decode(token, secret, algorithms=["HS256"])
+        if payload.get("typ") != "access":
+            raise HTTPException(status_code=401, detail="Invalid token type: access token required")
         return payload
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid authentication credentials")
