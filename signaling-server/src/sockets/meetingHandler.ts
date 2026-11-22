@@ -2,6 +2,7 @@ import { Server, Socket } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import { jwtConfig } from '../config/jwtConfig';
 import { prisma } from '../config/db';
+import { redis1, isRedisAvailable } from '../config/redis';
 import { isMeetingExpired } from '../services/meetingLifecycle';
 
 interface ParticipantInfo {
@@ -39,37 +40,133 @@ const findActiveRoom = (idOrCode: string): MeetingRoom | undefined => {
 };
 
 export const setupMeetingHandler = (io: Server): void => {
-  io.on('connection', (socket: Socket) => {
+  io.use(async (socket: Socket, next) => {
     const token = socket.handshake.auth?.token;
     if (!token) {
-      socket.emit('auth-error', { error: 'No token provided' });
-      socket.disconnect(true);
-      return;
+      return next(new Error('Authentication error: No token provided'));
     }
 
-    let userId: string;
     try {
       const decoded = jwt.verify(token, jwtConfig.publicKey, {
         algorithms: [jwtConfig.algorithm],
       }) as { userId: string; jti?: string; typ?: string };
 
       if (decoded.typ !== 'access') {
-        socket.emit('auth-error', { error: 'Invalid token type. Access token required.' });
+        return next(new Error('Authentication error: Invalid token type. Access token required.'));
+      }
+
+      if (decoded.jti && redis1 && isRedisAvailable()) {
+        try {
+          const blacklisted = await redis1.get(`bl_${decoded.jti}`);
+          if (blacklisted) {
+            return next(new Error('Authentication error: Token has been revoked.'));
+          }
+        } catch (err) {
+          console.warn('[Socket] Redis error checking token revocation:', err);
+        }
+      }
+
+      const dbUser = await prisma.user.findUnique({
+        where: { id: decoded.userId },
+        select: { id: true, name: true, username: true, avatarColor: true, role: true, isActive: true }
+      });
+
+      if (!dbUser) {
+        return next(new Error('Authentication error: User not found'));
+      }
+
+      if (!dbUser.isActive) {
+        return next(new Error('Authentication error: Account deactivated'));
+      }
+
+      socket.data.user = dbUser;
+      next();
+    } catch (err: any) {
+      return next(new Error('Authentication error: Invalid or expired token'));
+    }
+  });
+
+  io.on('connection', async (socket: Socket) => {
+    let user = socket.data.user;
+
+    // Fallback if io.use was bypassed in certain environments
+    if (!user) {
+      const token = socket.handshake.auth?.token;
+      if (!token) {
+        socket.emit('auth-error', { error: 'No token provided' });
         socket.disconnect(true);
         return;
       }
 
-      userId = decoded.userId;
-    } catch {
-      socket.emit('auth-error', { error: 'Invalid or expired token' });
-      socket.disconnect(true);
-      return;
+      let userId: string;
+      let jti: string | undefined;
+      try {
+        const decoded = jwt.verify(token, jwtConfig.publicKey, {
+          algorithms: [jwtConfig.algorithm],
+        }) as { userId: string; jti?: string; typ?: string };
+
+        if (decoded.typ !== 'access') {
+          socket.emit('auth-error', { error: 'Invalid token type. Access token required.' });
+          socket.disconnect(true);
+          return;
+        }
+
+        userId = decoded.userId;
+        jti = decoded.jti;
+      } catch {
+        socket.emit('auth-error', { error: 'Invalid or expired token' });
+        socket.disconnect(true);
+        return;
+      }
+
+      if (jti && redis1 && isRedisAvailable()) {
+        try {
+          const blacklisted = await redis1.get(`bl_${jti}`);
+          if (blacklisted) {
+            socket.emit('auth-error', { error: 'Token has been revoked.' });
+            socket.disconnect(true);
+            return;
+          }
+        } catch (err) {
+          console.warn('[Socket] Redis error checking token revocation:', err);
+        }
+      }
+
+      try {
+        const dbUser = await prisma.user.findUnique({
+          where: { id: userId },
+          select: { id: true, name: true, username: true, avatarColor: true, role: true, isActive: true }
+        });
+
+        if (!dbUser) {
+          socket.emit('auth-error', { error: 'User not found' });
+          socket.disconnect(true);
+          return;
+        }
+
+        if (!dbUser.isActive) {
+          socket.emit('auth-error', { error: 'Account deactivated' });
+          socket.disconnect(true);
+          return;
+        }
+
+        user = dbUser;
+        socket.data.user = dbUser;
+      } catch (err) {
+        socket.emit('auth-error', { error: 'Failed to authenticate socket' });
+        socket.disconnect(true);
+        return;
+      }
     }
 
+    const userId = user.id;
     socket.join(`user:${userId}`);
 
-    socket.on('join-room', async (data: { meetingId: string; roomCode: string; username: string; name: string; avatarColor: string }) => {
-      const { meetingId, roomCode, username, name, avatarColor } = data;
+    socket.on('join-room', async (data: { meetingId: string; roomCode?: string }) => {
+      const { meetingId, roomCode } = data;
+      const username = user.username;
+      const name = user.name;
+      const avatarColor = user.avatarColor || '#3B82F6';
       
       try {
         const meeting = await prisma.meeting.findFirst({
@@ -447,21 +544,28 @@ export const setupMeetingHandler = (io: Server): void => {
       }
     });
 
-    socket.on('send-chat', (data: { meetingId: string; text: string; senderId: string; senderName: string }) => {
+    socket.on('send-chat', (data: { meetingId: string; text: string; senderId?: string; senderName?: string }) => {
       const room = findActiveRoom(data.meetingId);
       if (room && room.participants.has(userId)) {
         socket.to(`meeting:${room.meetingId}`).emit('chat-message', {
           id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
-          senderId: data.senderId, senderName: data.senderName, text: data.text, timestamp: new Date().toISOString()
+          senderId: user.id,
+          senderName: user.name,
+          text: data.text,
+          timestamp: new Date().toISOString()
         });
       }
     });
 
-    socket.on('live-transcript', async (data: { meetingId: string; text: string; isFinal: boolean; userName: string; actualStartTime?: string }) => {
+    socket.on('live-transcript', async (data: { meetingId: string; text: string; isFinal: boolean; userName?: string; actualStartTime?: string }) => {
       const room = findActiveRoom(data.meetingId);
       if (room && room.participants.has(userId)) {
         io.to(`meeting:${room.meetingId}`).emit('live-transcript', {
-          userId, userName: data.userName, text: data.text, isFinal: data.isFinal, timestamp: new Date().toISOString()
+          userId: user.id,
+          userName: user.name,
+          text: data.text,
+          isFinal: data.isFinal,
+          timestamp: new Date().toISOString()
         });
       }
     });
@@ -470,6 +574,9 @@ export const setupMeetingHandler = (io: Server): void => {
       if (!data?.meetingId) return;
       const room = findActiveRoom(data.meetingId);
       const canonicalId = room ? room.meetingId : data.meetingId;
+      if (!socket.rooms.has(`meeting:${canonicalId}`) && !socket.rooms.has(`meeting:${data.meetingId}`)) {
+        return;
+      }
       socket.to(`meeting:${canonicalId}`).emit('draw-line', data);
     });
 
@@ -477,6 +584,9 @@ export const setupMeetingHandler = (io: Server): void => {
       if (!data?.meetingId) return;
       const room = findActiveRoom(data.meetingId);
       const canonicalId = room ? room.meetingId : data.meetingId;
+      if (!socket.rooms.has(`meeting:${canonicalId}`) && !socket.rooms.has(`meeting:${data.meetingId}`)) {
+        return;
+      }
       socket.to(`meeting:${canonicalId}`).emit('draw-clear');
     });
   });
