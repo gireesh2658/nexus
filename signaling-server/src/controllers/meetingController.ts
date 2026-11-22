@@ -399,16 +399,12 @@ export const giveConsent = async (req: AuthRequest, res: Response): Promise<void
     });
 
     if (!participant) {
-      participant = await prisma.participant.create({
-        data: {
-          meetingId: meeting.id,
-          userId: req.user.id,
-          status: 'accepted',
-          consentGiven: true,
-          consentTimestamp: new Date()
-        }
-      });
-      res.json({ participant });
+      res.status(403).json({ error: 'You are not invited to this meeting' });
+      return;
+    }
+
+    if (participant.status === 'removed' || participant.status === 'declined') {
+      res.status(403).json({ error: 'You are not authorized to give consent for this meeting' });
       return;
     }
 
@@ -455,11 +451,17 @@ export const generateLiveKitToken = async (req: AuthRequest, res: Response): Pro
     }
 
     const isHost = meeting.hostId === req.user.id;
-    const isParticipant = await prisma.participant.findFirst({
+
+    if (meeting.isLocked && !isHost) {
+      res.status(403).json({ error: 'Meeting is locked by the host' });
+      return;
+    }
+
+    const participant = await prisma.participant.findFirst({
       where: { meetingId: meeting.id, userId: req.user.id }
     });
 
-    if (!isHost && !isParticipant && req.user.role !== 'admin') {
+    if (!isHost && (!participant || participant.status === 'removed' || participant.status === 'declined')) {
       res.status(403).json({ error: 'You are not authorized to join this meeting' });
       return;
     }
@@ -491,7 +493,7 @@ export const generateLiveKitToken = async (req: AuthRequest, res: Response): Pro
     res.json({
       token,
       wsUrl: process.env.LIVEKIT_WS_URL,
-      consentGiven: isParticipant ? isParticipant.consentGiven : false,
+      consentGiven: participant ? participant.consentGiven : false,
       isHost,
       hostId: meeting.hostId,
       meetingId: meeting.id,
@@ -642,6 +644,28 @@ export const getMeetingSummary = async (req: AuthRequest, res: Response): Promis
 
     if (!meeting) {
       res.status(404).json({ error: 'Meeting not found' });
+      return;
+    }
+
+    const isHost = meeting.hostId === req.user.id;
+    const isAdmin = req.user.role === 'admin';
+    let isAuthorized = isHost || isAdmin;
+
+    if (!isAuthorized) {
+      const participant = await prisma.participant.findFirst({
+        where: {
+          meetingId: meeting.id,
+          userId: req.user.id,
+          status: { notIn: ['removed', 'declined'] }
+        }
+      });
+      if (participant) {
+        isAuthorized = true;
+      }
+    }
+
+    if (!isAuthorized) {
+      res.status(403).json({ error: 'Not authorized to view meeting summary' });
       return;
     }
 

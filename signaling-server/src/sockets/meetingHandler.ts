@@ -110,6 +110,11 @@ export const setupMeetingHandler = (io: Server): void => {
           return;
         }
 
+        if (!isHost && participantDb && (participantDb.status === 'removed' || participantDb.status === 'declined')) {
+          socket.emit('join-error', { error: 'You are not authorized to join this meeting.' });
+          return;
+        }
+
         const roomKey = meeting.id;
 
         if (!activeRooms.has(roomKey)) {
@@ -200,7 +205,7 @@ export const setupMeetingHandler = (io: Server): void => {
             }
             await prisma.participant.update({
               where: { id: p.id },
-              data: { status: 'accepted', joinTime }
+              data: { joinTime }
             });
           }
         } catch (err) {
@@ -311,6 +316,10 @@ export const setupMeetingHandler = (io: Server): void => {
       const room = findActiveRoom(data.meetingId);
       if (!room || room.hostId !== userId) return;
       room.isLocked = data.isLocked;
+      await prisma.meeting.update({
+        where: { id: room.meetingId },
+        data: { isLocked: data.isLocked }
+      }).catch(err => console.error('[Meeting] Failed to persist isLocked:', err));
       io.to(`meeting:${room.meetingId}`).emit('meeting-locked-state', { isLocked: data.isLocked });
     });
 
