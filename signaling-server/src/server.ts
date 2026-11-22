@@ -154,10 +154,12 @@ const startServer = async () => {
   });
 };
 
-startServer().catch(console.error);
+if (process.env.NODE_ENV !== 'test') {
+  startServer().catch(console.error);
+}
 
 // Global error handlers — prevent silent crashes
-process.on('unhandledRejection', (reason, promise) => {
+process.on('unhandledRejection', (reason, _promise) => {
   console.error('[FATAL] Unhandled Promise Rejection:', reason);
 });
 
@@ -166,4 +168,4 @@ process.on('uncaughtException', (error) => {
   process.exit(1);
 });
 
-export { io };
+export { app, server, io };

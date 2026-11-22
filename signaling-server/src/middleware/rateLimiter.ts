@@ -7,6 +7,9 @@ import { redis1 } from '../config/redis';
  * When Redis is available, uses RedisStore; otherwise falls back to MemoryStore.
  */
 const buildStore = () => {
+  if (process.env.DISABLE_RATE_LIMIT === 'true' || process.env.NODE_ENV === 'test') {
+    return undefined;
+  }
   if (redis1) {
     try {
       return new RedisStore({
