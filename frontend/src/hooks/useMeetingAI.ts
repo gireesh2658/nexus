@@ -21,9 +21,9 @@ export interface AIEngagementStats {
   volume: number;
 }
 
-export const useMeetingAI = ({ stream, enabled, actualStartTime, meetingId, token, userId }: UseMeetingAIProps): AIEngagementStats => {
+export const useMeetingAI = ({ stream, enabled, actualStartTime }: UseMeetingAIProps): AIEngagementStats => {
   const { volume, isSpeaking, speakingDurationMs } = useAudioAnalyzer({ stream });
-  const { focusScore, isLookingAway } = useFaceMesh({ stream, enabled, meetingId, token, userId });
+  const { focusScore, isLookingAway } = useFaceMesh({ stream, enabled });
   const { emotion } = useEmotionDetection({ stream, enabled });
   
   const [engagementScore, setEngagementScore] = useState(100);
@@ -88,37 +88,6 @@ export const useMeetingAI = ({ stream, enabled, actualStartTime, meetingId, toke
 
     return () => clearInterval(interval);
   }, [focusScore, emotion, isSpeaking, speakingDurationMs, enabled, actualStartTime, stream]);
-
-  // Connect to backend behavioral WS to trigger server-side fusion + TimescaleDB storage
-  useEffect(() => {
-    if (!enabled || !meetingId || !token || !userId) return;
-
-    const ws = new WebSocket(`ws://localhost:8000/api/focus/ws/behavioral`);
-    
-    ws.onopen = () => {
-      // Send auth token first
-      ws.send(JSON.stringify({ token }));
-    };
-
-    const interval = setInterval(() => {
-      if (ws.readyState === WebSocket.OPEN) {
-        // Send basic behavioral stats to trigger fusion loop on the server
-        ws.send(JSON.stringify({
-          meeting_id: meetingId,
-          participant_id: userId,
-          tab_visible: !document.hidden,
-          idle_seconds: 0,
-          mouse_events: 0,
-          keyboard_events: 0
-        }));
-      }
-    }, 5000);
-
-    return () => {
-      clearInterval(interval);
-      ws.close();
-    };
-  }, [enabled, meetingId, token, userId]);
 
   return {
     focusScore,

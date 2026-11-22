@@ -24,6 +24,7 @@ services:
       - LIVEKIT_API_SECRET=secret12345678901234567890123456789012
       - LIVEKIT_WS_URL=ws://localhost:7880
       - VITE_ANALYSIS_URL=http://analysis-api:8000
+      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN required}
     depends_on:
       - redis
 
@@ -41,6 +42,7 @@ services:
       - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.8-flash}
+      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN required}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

@@ -5,7 +5,8 @@ import logging
 import asyncio
 import urllib.parse
 from datetime import datetime
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+import secrets
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Header
 import asyncpg
 from google import genai
 from google.genai import types
@@ -257,10 +258,19 @@ async def generate_summary_task(meeting_id: str):
         await pool.close()
 
 @router.post("/summarize/{meeting_id}")
-async def trigger_summarize(meeting_id: str, background_tasks: BackgroundTasks):
+async def trigger_summarize(
+    meeting_id: str,
+    background_tasks: BackgroundTasks,
+    x_internal_token: str | None = Header(default=None, alias="X-Internal-Token")
+):
     """
     Endpoint triggered when a meeting ends.
+    Requires header X-Internal-Token matching env INTERNAL_API_TOKEN.
     Initiates the background summarization task using Gemini API.
     """
+    internal_token = os.getenv("INTERNAL_API_TOKEN")
+    if not internal_token or not x_internal_token or not secrets.compare_digest(x_internal_token, internal_token):
+        raise HTTPException(status_code=401, detail="Unauthorized: invalid or missing internal token")
+
     background_tasks.add_task(generate_summary_task, meeting_id)
     return {"message": "Gemini summarization task triggered", "meeting_id": meeting_id}

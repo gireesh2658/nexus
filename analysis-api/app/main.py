@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(na
 
 # We are no longer importing MongoDB connection logic.
 # Postgres (Timescale) and Redis will be connected here as needed later.
-from app.routers import focus, analytics, telemetry, rooms, webhooks, ai
+from app.routers import focus, analytics, telemetry, webhooks, ai
 from app.utils.timescale_writer import init_timescale, close_pool
 import redis.asyncio as redis
 
@@ -119,7 +119,6 @@ async def health_ready():
 
 # Routers
 app.include_router(telemetry.router, prefix="/api/telemetry", tags=["Telemetry Ingress"])
-app.include_router(rooms.router, prefix="/api/rooms", tags=["Rooms (WebRTC)"])
 app.include_router(focus.router, prefix="/api/focus", tags=["Focus Detection"])
 
 app.include_router(analytics.router, prefix="/api/analytics", tags=["Analytics"])

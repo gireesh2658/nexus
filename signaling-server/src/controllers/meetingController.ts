@@ -600,7 +600,12 @@ export const endMeeting = async (req: AuthRequest, res: Response): Promise<void>
 
     // Trigger AI summary asynchronously
     const analysisApiUrl = process.env.VITE_ANALYSIS_URL ? process.env.VITE_ANALYSIS_URL.replace('ws://', 'http://') : 'http://localhost:8000';
-    fetch(`${analysisApiUrl}/api/ai/summarize/${canonicalMeetingId}`, { method: 'POST' }).then(res => {
+    fetch(`${analysisApiUrl}/api/ai/summarize/${canonicalMeetingId}`, {
+      method: 'POST',
+      headers: {
+        'X-Internal-Token': process.env.INTERNAL_API_TOKEN || ''
+      }
+    }).then(res => {
       console.log(`AI trigger response: ${res.status} ${res.statusText}`);
     }).catch(err => {
       console.error('Failed to trigger AI summary:', err);

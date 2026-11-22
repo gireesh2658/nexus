@@ -45,6 +45,7 @@ services:
       - "LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:?FATAL: LIVEKIT_API_SECRET must be configured in production}"
       - "LIVEKIT_WS_URL=${LIVEKIT_WS_URL:?FATAL: LIVEKIT_WS_URL must be configured in production}"
       - VITE_ANALYSIS_URL=http://analysis-api:8000
+      - "INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:?FATAL: INTERNAL_API_TOKEN must be configured in production}"
     depends_on:
       nexus-timescale:
         condition: service_healthy
@@ -79,6 +80,7 @@ services:
       - "LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:?FATAL: LIVEKIT_API_SECRET must be configured in production}"
       - "GEMINI_API_KEY=${GEMINI_API_KEY:?FATAL: GEMINI_API_KEY must be configured in production}"
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.8-flash}
+      - "INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:?FATAL: INTERNAL_API_TOKEN must be configured in production}"
     depends_on:
       nexus-timescale:
         condition: service_healthy

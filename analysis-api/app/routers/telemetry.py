@@ -1,9 +1,8 @@
-import time
 import json
 import asyncio
 import logging
 from typing import List, Dict, Any
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter
 import asyncpg
 from app.utils.timescale_writer import get_pool
 
@@ -139,49 +138,4 @@ async def startup_event():
 async def shutdown_event():
     await batcher.stop()
 
-@router.websocket("/ws")
-async def telemetry_ingress(websocket: WebSocket):
-    """
-    WebSocket Ingress for Edge Telemetry.
-    Receives JSON telemetry (e.g. 1-2Hz) from the client's local MediaPipe/WASM execution.
-    """
-    await websocket.accept()
-    client_id = websocket.client.host
 
-    try:
-        while True:
-            # Receive downsampled lightweight JSON payload from edge
-            data = await websocket.receive_json()
-
-            # Validation
-            meeting_id = data.get("meeting_id")
-            participant_id = data.get("participant_id")
-            payload = data.get("payload")
-
-            if not meeting_id or not participant_id or not payload:
-                # Invalid event rejection
-                logger.debug(f"Invalid telemetry event received from {client_id}")
-                continue
-
-            # Enrich with server timestamp
-            enriched_payload = {
-                "server_timestamp_ms": int(time.time() * 1000),
-                "client_id": client_id,
-                **payload
-            }
-            
-            # Bounded in-memory queue
-            batcher.enqueue({
-                "meeting_id": meeting_id,
-                "participant_id": participant_id,
-                "payload": enriched_payload
-            })
-            
-    except WebSocketDisconnect:
-        logger.info(f"Client {client_id} disconnected from telemetry ingress")
-    except Exception as e:
-        logger.error(f"Error in telemetry ingress for {client_id}: {e}")
-        try:
-            await websocket.close(code=1011)
-        except:
-            pass

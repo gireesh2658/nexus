@@ -28,7 +28,7 @@ interface UseFaceMeshProps {
  * - Requires 2.5s sustained gaze away before confirming focus loss.
  * - Recovers automatically within 800ms when user returns gaze to screen.
  */
-export const useFaceMesh = ({ stream, enabled, meetingId, token, userId }: UseFaceMeshProps) => {
+export const useFaceMesh = ({ stream, enabled }: UseFaceMeshProps) => {
   const [focusScore, setFocusScore] = useState<number>(100);
   const [isLookingAway, setIsLookingAway] = useState(false);
   const [isUnavailable, setIsUnavailable] = useState(false);
@@ -40,25 +40,6 @@ export const useFaceMesh = ({ stream, enabled, meetingId, token, userId }: UseFa
   // Tracking
   const lastFrameTimeRef = useRef<number>(0);
   const requestAnimationFrameRef = useRef<number>(0);
-  const wsRef = useRef<WebSocket | null>(null);
-
-  useEffect(() => {
-    if (!enabled || !meetingId || !token) return;
-    
-    const ws = new WebSocket(`ws://localhost:8000/api/focus/ws/frame`);
-    
-    ws.onopen = () => {
-      ws.send(JSON.stringify({ token }));
-    };
-    
-    ws.onerror = (err) => console.error('FaceMesh WS error:', err);
-    
-    wsRef.current = ws;
-    return () => {
-      ws.close();
-      wsRef.current = null;
-    };
-  }, [enabled, meetingId, token]);
 
   useEffect(() => {
     if (!enabled) {
@@ -129,17 +110,6 @@ export const useFaceMesh = ({ stream, enabled, meetingId, token, userId }: UseFa
       setFocusScore(res.focusScore);
       setIsLookingAway(res.isLookingAway);
       setIsUnavailable(res.isUnavailable);
-
-      // Send to backend for fusion if connected
-      if (wsRef.current?.readyState === WebSocket.OPEN && userId && meetingId) {
-        wsRef.current.send(JSON.stringify({
-          meeting_id: meetingId,
-          participant_id: userId,
-          landmarks: landmarks,
-          focus_score: res.focusScore,
-          is_looking_away: res.isLookingAway
-        }));
-      }
 
       return res;
     };
@@ -227,7 +197,7 @@ export const useFaceMesh = ({ stream, enabled, meetingId, token, userId }: UseFa
         videoRef.current.srcObject = null;
       }
     };
-  }, [stream?.getVideoTracks()[0]?.id, enabled, meetingId, userId]);
+  }, [stream?.getVideoTracks()[0]?.id, enabled]);
 
   return { focusScore, isLookingAway, isUnavailable };
 };
