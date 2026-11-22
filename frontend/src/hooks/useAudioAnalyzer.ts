@@ -7,9 +7,76 @@ interface UseAudioAnalyzerProps {
 }
 
 /**
+ * Pure calculation of RMS from time-domain audio samples centered at 128.
+ * normalized = (sample - 128) / 128; sum(normalized^2) / N; sqrt
+ */
+export function calculateRms(dataArray: Uint8Array): number {
+  if (dataArray.length === 0) return 0;
+  let sum = 0;
+  for (let i = 0; i < dataArray.length; i++) {
+    const normalized = (dataArray[i] - 128) / 128;
+    sum += normalized * normalized;
+  }
+  return Math.sqrt(sum / dataArray.length);
+}
+
+/**
+ * Noise floor = max(min(recent 30 frames), 0.01)
+ */
+export function computeNoiseFloor(recentRmsHistory: number[]): number {
+  if (recentRmsHistory.length === 0) return 0.01;
+  const recent30 = recentRmsHistory.slice(-30);
+  const minRecent = Math.min(...recent30);
+  return Math.max(minRecent, 0.01);
+}
+
+/**
+ * Threshold check: isSpeaking = rms > noise_floor * 2.5
+ */
+export function isSpeakingThreshold(rms: number, noiseFloor: number): boolean {
+  return rms > noiseFloor * 2.5;
+}
+
+/**
+ * Pure calculation of RMS, noise floor, and speaking status with hangover/debounce.
+ */
+export function calculateRmsAndSpeaking(
+  dataArray: Uint8Array,
+  recentRmsHistory: number[] = [],
+  hangoverCounter: number = 0
+): {
+  rms: number;
+  noiseFloor: number;
+  isSpeaking: boolean;
+  hangoverCounter: number;
+} {
+  const rms = calculateRms(dataArray);
+  const noiseFloor = computeNoiseFloor(recentRmsHistory);
+  const rawSpeaking = isSpeakingThreshold(rms, noiseFloor);
+
+  let newHangover = hangoverCounter;
+  let speaking = false;
+
+  if (rawSpeaking) {
+    speaking = true;
+    newHangover = 3; // hangover debounce frames
+  } else if (newHangover > 0) {
+    speaking = true;
+    newHangover -= 1;
+  }
+
+  return {
+    rms,
+    noiseFloor,
+    isSpeaking: speaking,
+    hangoverCounter: newHangover,
+  };
+}
+
+/**
  * Ultra Promax Audio Analyzer Hook
- * Implements real 100ms Web Audio API RMS calculations, dynamic 5s noise floor tracking, 
- * 1.5x thresholding, and continuous speaking time aggregation.
+ * Uses time-domain RMS data (analyser.fftSize), dynamic sliding noise floor tracking (recent 30 frames),
+ * and 2.5x thresholding with hangover debounce.
  */
 export const useAudioAnalyzer = ({
   stream,
@@ -27,7 +94,7 @@ export const useAudioAnalyzer = ({
   // Dynamic tracking
   const rmsHistoryRef = useRef<number[]>([]);
   const speakingDurationMsRef = useRef<number>(0);
-  const consecutiveSpeakingMsRef = useRef<number>(0);
+  const hangoverRef = useRef<number>(0);
 
   useEffect(() => {
     if (!stream || stream.getAudioTracks().length === 0) return;
@@ -44,42 +111,32 @@ export const useAudioAnalyzer = ({
     source.connect(analyser);
     sourceRef.current = source;
 
-    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+    // Buffer size must be analyser.fftSize, not frequencyBinCount
+    const dataArray = new Uint8Array(analyser.fftSize);
 
     const updateVolume = () => {
-      analyser.getByteFrequencyData(dataArray);
-      
-      // Calculate RMS
-      let sum = 0;
-      for (let i = 0; i < dataArray.length; i++) {
-         sum += (dataArray[i] / 128 - 1) * (dataArray[i] / 128 - 1); // True RMS of waveform
-      }
-      const rms = Math.sqrt(sum / dataArray.length);
-      
+      analyser.getByteTimeDomainData(dataArray);
+
+      const { rms, isSpeaking: speakingNow, hangoverCounter } = calculateRmsAndSpeaking(
+        dataArray,
+        rmsHistoryRef.current,
+        hangoverRef.current
+      );
+      hangoverRef.current = hangoverCounter;
+
       const normalizedVolume = Math.min(100, Math.max(0, rms * 100));
       setVolume(normalizedVolume);
-      
-      // Dynamic Noise Floor (5 second sliding window = 50 samples at 100ms)
+
+      // Track recent 30 frames for dynamic noise floor
       rmsHistoryRef.current.push(rms);
-      if (rmsHistoryRef.current.length > 50) {
-         rmsHistoryRef.current.shift();
-      }
-      
-      const noiseFloor = Math.min(...rmsHistoryRef.current, 0.01); // fallback min to prevent /0
-      
-      // Active Speaker Threshold > 1.5x noise floor
-      if (rms > noiseFloor * 1.5 && rms > 0.05) { // 0.05 absolute minimum to avoid silence scaling
-         consecutiveSpeakingMsRef.current += 100;
-      } else {
-         consecutiveSpeakingMsRef.current = 0;
+      if (rmsHistoryRef.current.length > 30) {
+        rmsHistoryRef.current.shift();
       }
 
-      // Require 300ms continuous above threshold to trigger "isSpeaking"
-      const activelySpeaking = consecutiveSpeakingMsRef.current >= 300;
-      setIsSpeaking(activelySpeaking);
+      setIsSpeaking(speakingNow);
 
-      if (activelySpeaking) {
-         speakingDurationMsRef.current += 100;
+      if (speakingNow) {
+        speakingDurationMsRef.current += 100;
       }
     };
 
@@ -93,6 +150,5 @@ export const useAudioAnalyzer = ({
     };
   }, [stream, fftSize, smoothingTimeConstant]);
 
-  // eslint-disable-next-line react-hooks/refs
   return { volume, isSpeaking, speakingDurationMs: speakingDurationMsRef.current };
 };
