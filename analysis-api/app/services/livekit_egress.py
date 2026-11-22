@@ -33,11 +33,11 @@ def get_lk_api():
             url = url.replace("ws://", "http://")
         elif url.startswith("wss://"):
             url = url.replace("wss://", "https://")
-        lk_api = api.LiveKitAPI(
-            url,
-            os.getenv("LIVEKIT_API_KEY", "devkey"),
-            os.getenv("LIVEKIT_API_SECRET", "secret12345678901234567890123456789012")
-        )
+        key = os.getenv("LIVEKIT_API_KEY")
+        secret = os.getenv("LIVEKIT_API_SECRET")
+        if not key or not secret:
+            raise ValueError("LIVEKIT_API_KEY and LIVEKIT_API_SECRET must be configured")
+        lk_api = api.LiveKitAPI(url, key, secret)
     return lk_api
 
 async def stop_room_egress(room_name: str):
@@ -199,8 +199,10 @@ async def handle_room_events(room_name: str):
 
     try:
         url = os.getenv("LIVEKIT_URL") or os.getenv("LIVEKIT_WS_URL") or "ws://localhost:7880"
-        api_key = os.getenv("LIVEKIT_API_KEY", "devkey")
-        api_secret = os.getenv("LIVEKIT_API_SECRET", "secret12345678901234567890123456789012")
+        api_key = os.getenv("LIVEKIT_API_KEY")
+        api_secret = os.getenv("LIVEKIT_API_SECRET")
+        if not api_key or not api_secret:
+            raise ValueError("LIVEKIT_API_KEY and LIVEKIT_API_SECRET must be configured")
         
         token = api.AccessToken(api_key, api_secret) \
             .with_identity("nexus-egress-daemon") \

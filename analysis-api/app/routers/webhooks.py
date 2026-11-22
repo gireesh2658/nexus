@@ -10,8 +10,10 @@ router = APIRouter()
 
 def get_receiver():
     """Create receiver using current environment credentials."""
-    key = os.getenv("LIVEKIT_API_KEY", "devkey")
-    secret = os.getenv("LIVEKIT_API_SECRET", "secret12345678901234567890123456789012")
+    key = os.getenv("LIVEKIT_API_KEY")
+    secret = os.getenv("LIVEKIT_API_SECRET")
+    if not key or not secret:
+        raise ValueError("LIVEKIT_API_KEY and LIVEKIT_API_SECRET must be set")
     return api.WebhookReceiver(api.TokenVerifier(key, secret))
 
 @router.post("/livekit")
@@ -28,13 +30,8 @@ async def livekit_webhook(request: Request):
         receiver = get_receiver()
         event = receiver.receive(body.decode('utf-8'), token)
     except Exception as e:
-        # If signed by secondary devkey, try that before failing
-        try:
-            receiver_dev = api.WebhookReceiver(api.TokenVerifier("devkey", "secret12345678901234567890123456789012"))
-            event = receiver_dev.receive(body.decode('utf-8'), token)
-        except Exception:
-            logger.warning(f"Webhook signature verification failed: {e}")
-            raise HTTPException(status_code=401, detail=f"Webhook verification failed: {str(e)}")
+        logger.warning(f"Webhook signature verification failed: {e}")
+        raise HTTPException(status_code=401, detail=f"Webhook verification failed: {str(e)}")
         
     # Spawn in-process LiveKit egress worker to handle telemetry, audio, and CC
     if event.event == "room_started":

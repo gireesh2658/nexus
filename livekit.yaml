@@ -4,11 +4,7 @@ rtc:
   port_range_start: 50000
   port_range_end: 50050
   use_external_ip: false
-keys:
-  devkey: secret12345678901234567890123456789012
-  APIatEhV6cExhCE: Qk4BPqHyeUjuUd9DqZDsGjlNoDPkzEPZ2ainFAYB3Ja
 
 webhook:
-  api_key: devkey
   urls:
     - http://host.docker.internal:8000/api/webhooks/livekit

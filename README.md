@@ -79,7 +79,7 @@ Nexus uses environment variables for service discovery, database connections, an
    - `TELEMETRY_DATABASE_URL`: Connection string for TimescaleDB.
    - `JWT_SECRET`: 64+ character random string for signing tokens.
    - `GEMINI_API_KEY`: Your Google AI Studio API key.
-   - `LIVEKIT_API_KEY` & `LIVEKIT_API_SECRET`: Defaults to `devkey` / `secret12345678901234567890123456789012` for local development.
+   - `LIVEKIT_API_KEY` & `LIVEKIT_API_SECRET`: LiveKit API credentials configured in `.env`.
 
 ---
 

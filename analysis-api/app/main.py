@@ -26,6 +26,15 @@ redis_client = None
 async def lifespan(app: FastAPI):
     """Startup and shutdown lifecycle."""
     global redis_client
+
+    # Fail closed if critical environment variables are missing
+    required_env_vars = ["LIVEKIT_API_KEY", "LIVEKIT_API_SECRET", "JWT_SECRET", "INTERNAL_API_TOKEN"]
+    missing_vars = [var for var in required_env_vars if not os.getenv(var)]
+    if missing_vars:
+        msg = f"FATAL: Missing required environment variables: {', '.join(missing_vars)}. Service failing closed."
+        logging.critical(msg)
+        raise RuntimeError(msg)
+
     # Initialize TimescaleDB tables and hypertables
     try:
         await init_timescale()

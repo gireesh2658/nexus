@@ -15,13 +15,13 @@ services:
     environment:
       - APP_DATABASE_URL=postgresql://${DB_USER}:${DB_PASSWORD}@nexus-timescale:5432/${DB_NAME}?schema=public
       - DATABASE_URL=postgresql://${DB_USER}:${DB_PASSWORD}@nexus-timescale:5432/${DB_NAME}?schema=public
-      - JWT_SECRET=${JWT_SECRET:-supersecretjwt}
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET required}
       - REDIS_URL=redis://redis:6379/0
       - SIGNAL_REDIS_DB=2
       - ALLOWED_ORIGIN=http://localhost:3000
       - NODE_ENV=production
-      - LIVEKIT_API_KEY=devkey
-      - LIVEKIT_API_SECRET=secret12345678901234567890123456789012
+      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY:?LIVEKIT_API_KEY required}
+      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:?LIVEKIT_API_SECRET required}
       - LIVEKIT_WS_URL=ws://localhost:7880
       - VITE_ANALYSIS_URL=http://analysis-api:8000
       - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN required}
@@ -37,9 +37,9 @@ services:
       - TELEMETRY_DATABASE_URL=postgresql://${DB_USER}:${DB_PASSWORD}@nexus-timescale:5432/${DB_NAME}
       - REDIS_URL=redis://redis:6379/0
       - ALLOWED_ORIGIN=http://localhost:3000,http://localhost:5173
-      - JWT_SECRET=${JWT_SECRET:-supersecretjwt}
-      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY}
-      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET required}
+      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY:?LIVEKIT_API_KEY required}
+      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:?LIVEKIT_API_SECRET required}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.8-flash}
       - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN required}
@@ -91,7 +91,7 @@ services:
     volumes:
       - ./livekit.yaml:/livekit.yaml
     environment:
-      - "LIVEKIT_KEYS=devkey: secret12345678901234567890123456789012"
+      - "LIVEKIT_KEYS=${LIVEKIT_API_KEY:?LIVEKIT_API_KEY required}: ${LIVEKIT_API_SECRET:?LIVEKIT_API_SECRET required}"
 
 volumes:
   pgdata_telemetry:
